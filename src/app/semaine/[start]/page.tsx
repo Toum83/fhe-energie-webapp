@@ -85,8 +85,16 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
           </table>
         </div>
         <p className="mt-2 text-xs text-faint">
-          Tarifs utilisés : {report.price_import.toFixed(4)} €/kWh acheté, {report.price_export.toFixed(4)} €/kWh
-          revendu. Taux = part de la production consommée sur place.
+          Tarifs : {report.price_import.toFixed(4)} €/kWh acheté ; surplus revendu{" "}
+          {report.price_export.toFixed(2)} €/kWh
+          {report.price_export_above != null
+            ? ` jusqu'au plafond annuel, puis ${report.price_export_above.toFixed(2)} €/kWh`
+            : ""}
+          {report.export_cap_remaining_kwh != null
+            ? ` (${kwh(report.export_cap_remaining_kwh)} restants sous plafond)`
+            : ""}
+          . Soutirage payé : {eur(report.grid_cost_eur)}. Taux = part de la production consommée sur
+          place.
         </p>
       </section>
     </div>

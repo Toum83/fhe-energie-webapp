@@ -24,6 +24,12 @@ export type WeeklyReport = {
   revenue_export_eur: number;
   price_import: number;
   price_export: number;
+  price_export_above: number | null;
+  export_cap_kwh: number | null;
+  export_at_tier1_kwh: number | null;
+  export_at_tier2_kwh: number | null;
+  export_cap_remaining_kwh: number | null;
+  grid_cost_eur: number | null;
   best_day: string | null;
   best_day_production_kwh: number | null;
   days: DayStat[];

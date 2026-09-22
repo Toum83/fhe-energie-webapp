@@ -1,8 +1,10 @@
 import type { DayStat, WeeklyReport } from "./types";
 
 // Données réelles FHE (septembre 2026) pour le développement local : MOCK_DATA=1
-const PRICE_IMPORT = 0.25;
-const PRICE_EXPORT = 0.04;
+const PRICE_IMPORT = 0.2051;
+const PRICE_EXPORT = 0.1;
+const PRICE_EXPORT_ABOVE = 0.05;
+const EXPORT_CAP = 1143;
 
 function day(date: string, prod: number, conso: number, rate: number | null): DayStat {
   const self = rate == null ? Math.min(prod, conso) : (prod * rate) / 100;
@@ -40,6 +42,12 @@ function week(start: string, end: string, days: DayStat[]): WeeklyReport {
     savings_total_eur: +(self * PRICE_IMPORT + exp * PRICE_EXPORT).toFixed(2),
     price_import: PRICE_IMPORT,
     price_export: PRICE_EXPORT,
+    price_export_above: PRICE_EXPORT_ABOVE,
+    export_cap_kwh: EXPORT_CAP,
+    export_at_tier1_kwh: +exp.toFixed(2),
+    export_at_tier2_kwh: 0,
+    export_cap_remaining_kwh: +(EXPORT_CAP - exp).toFixed(2),
+    grid_cost_eur: +(sum("grid_import_kwh") * PRICE_IMPORT).toFixed(2),
     best_day: best.date,
     best_day_production_kwh: best.production_kwh,
     days,
