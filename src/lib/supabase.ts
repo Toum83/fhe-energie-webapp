@@ -8,7 +8,12 @@ function getClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return null;
-  return createClient(url, key, { auth: { persistSession: false } });
+  // Projet Supabase partagé avec d'autres apps (ex. app trail) : tout vit
+  // dans le schéma fhe_energy, jamais public — voir supabase/schema.sql.
+  return createClient(url, key, {
+    auth: { persistSession: false },
+    db: { schema: "fhe_energy" },
+  });
 }
 
 /** Tous les bilans, du plus récent au plus ancien. */
