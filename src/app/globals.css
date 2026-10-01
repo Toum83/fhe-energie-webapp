@@ -2,38 +2,49 @@
 
 :root {
   color-scheme: light;
-  --background: #f6f5f2;
-  --surface: #fcfcfb;
-  --border: #e4e2dc;
-  --foreground: #0b0b0b;
-  --muted: #52514e;
-  --faint: #8a8883;
-  /* Palette catégorielle validée (dataviz) : 1 = conso, 2 = production */
+  --background: #f3f2ee;
+  --surface: #ffffff;
+  --surface-2: #f7f6f2;
+  --border: rgb(20 20 18 / 0.08);
+  --foreground: #11110f;
+  --muted: #55544f;
+  --faint: #8b8983;
+  /* Palette catégorielle : conso = bleu, production = orange, autoconso = vert */
   --series-conso: #2a78d6;
   --series-prod: #eb6834;
-  --series-auto: #1baf7a;
-  --grid: #e9e7e1;
+  --series-auto: #17a673;
+  --grid: rgb(20 20 18 / 0.07);
+  --shadow: 0 1px 2px rgb(20 20 18 / 0.04), 0 8px 24px -12px rgb(20 20 18 / 0.14);
+  --hero-from: #f27b3d;
+  --hero-to: #d9481c;
+  --glow: rgb(235 104 52 / 0.16);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --background: #121211;
-    --surface: #1a1a19;
-    --border: #2b2b29;
-    --foreground: #ffffff;
-    --muted: #c3c2b7;
-    --faint: #8f8e86;
-    --series-conso: #3987e5;
-    --series-prod: #d95926;
-    --series-auto: #199e70;
-    --grid: #2b2b29;
+    --background: #0e0e0d;
+    --surface: #181817;
+    --surface-2: #1f1f1d;
+    --border: rgb(255 255 255 / 0.08);
+    --foreground: #f6f5f1;
+    --muted: #bdbcb2;
+    --faint: #8a897f;
+    --series-conso: #4b93ee;
+    --series-prod: #f0733a;
+    --series-auto: #2bc08a;
+    --grid: rgb(255 255 255 / 0.07);
+    --shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 12px 28px -16px rgb(0 0 0 / 0.7);
+    --hero-from: #d9571f;
+    --hero-to: #8f2c0b;
+    --glow: rgb(240 115 58 / 0.14);
   }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-border: var(--border);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
@@ -45,9 +56,136 @@
   --font-mono: var(--font-geist-mono);
 }
 
-body {
+html {
   background: var(--background);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background:
+    radial-gradient(120% 60% at 50% -10%, var(--glow), transparent 70%),
+    var(--background);
+  background-repeat: no-repeat;
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 1.75rem;
+    box-shadow: var(--shadow);
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .eyebrow {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.035em;
+    font-weight: 650;
+  }
+
+  .press {
+    transition: transform 0.18s ease, background-color 0.18s ease;
+  }
+  .press:active {
+    transform: scale(0.97);
+  }
+}
+
+/* Entrée progressive des blocs */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes grow-x {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes grow-y {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes ring {
+  from {
+    stroke-dashoffset: var(--circ);
+  }
+}
+
+.rise {
+  animation: rise 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+
+.bar-x {
+  transform-origin: left center;
+  animation: grow-x 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 70ms + 200ms);
+}
+
+.bar-y {
+  transform-origin: bottom center;
+  animation: grow-y 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 50ms + 250ms);
+}
+
+.ring-arc {
+  animation: ring 1.1s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: 250ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .bar-x,
+  .bar-y,
+  .ring-arc {
+    animation: none;
+  }
+}
+
+/* Barre de défilement horizontale discrète (chips de semaines) */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }

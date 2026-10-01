@@ -25,3 +25,12 @@ export function longDate(iso: string) {
 export function shortWeekday(iso: string) {
   return new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric" }).format(new Date(iso));
 }
+
+/** Nombre seul (sans unité), pour les gros chiffres. */
+export const num = (v: number | null | undefined, digits = 1) =>
+  v == null ? "—" : new Intl.NumberFormat("fr-FR", { maximumFractionDigits: digits }).format(v);
+
+/** Initiale du jour de la semaine (L M M J V S D). */
+export function weekdayInitial(iso: string) {
+  return new Intl.DateTimeFormat("fr-FR", { weekday: "narrow" }).format(new Date(iso)).toUpperCase();
+}

@@ -1,26 +1,35 @@
+import type { ReactNode } from "react";
+
 type Props = {
   label: string;
   value: string;
-  hint?: string;
+  unit?: string;
+  hint?: ReactNode;
   accent?: "prod" | "conso" | "auto" | "none";
+  /** Index pour l'animation d'entrée échelonnée. */
+  index?: number;
+  className?: string;
 };
 
 const accentClass = {
   prod: "bg-prod",
   conso: "bg-conso",
   auto: "bg-auto",
-  none: "bg-border",
+  none: "bg-faint",
 } as const;
 
-export function StatTile({ label, value, hint, accent = "none" }: Props) {
+export function StatTile({ label, value, unit, hint, accent = "none", index = 0, className = "" }: Props) {
   return (
-    <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-border bg-surface p-4">
-      <div className="flex items-center gap-2 text-[11px] font-medium uppercase leading-tight tracking-wide text-muted">
+    <div className={`card rise flex min-w-0 flex-col gap-2 p-5 ${className}`} style={{ "--i": index } as React.CSSProperties}>
+      <div className="eyebrow flex items-center gap-2">
         <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${accentClass[accent]}`} />
         <span className="truncate">{label}</span>
       </div>
-      <div className="text-2xl font-semibold tabular-nums">{value}</div>
-      {hint ? <div className="text-xs text-faint">{hint}</div> : null}
+      <div className="num text-[2rem] leading-none">
+        {value}
+        {unit ? <span className="ml-1 text-base font-semibold tracking-normal text-muted">{unit}</span> : null}
+      </div>
+      {hint ? <div className="text-xs leading-snug text-muted">{hint}</div> : null}
     </div>
   );
 }
