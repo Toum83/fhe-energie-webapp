@@ -29,9 +29,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="fr" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="flex min-h-full flex-col">
+      <body className="flex h-dvh flex-col overflow-hidden">
         <header
-          className="sticky top-0 z-40 border-b border-border bg-background"
+          className="shrink-0 border-b border-border bg-background"
           style={{ paddingTop: "env(safe-area-inset-top)" }}
         >
           <div
@@ -59,6 +59,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             </span>
           </div>
         </header>
+        {/*
+          Le contenu défile dans ce conteneur, pas dans la page : aucun élément fixed/sticky ni
+          défilement du document, donc iOS n'applique pas son effet de flou en bord d'écran
+          sous la barre d'état.
+        */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
         <main
           className="mx-auto w-full max-w-3xl flex-1 pt-5"
           style={{
@@ -74,6 +80,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         >
           Données : pinces FHE Drive&amp;Elec, bilans calculés par Home Assistant.
         </footer>
+        </div>
       </body>
     </html>
   );
