@@ -8,7 +8,8 @@ import { StatTile } from "@/components/StatTile";
 import { eur, kwh, longDate, num, pct, shortWeekday, weekLabel } from "@/lib/format";
 import { fetchReport, fetchReports } from "@/lib/supabase";
 
-export const revalidate = 3600;
+// 5 min : un bilan relancé dans HA apparaît vite, et les deux pages restent cohérentes.
+export const revalidate = 300;
 
 export default async function WeekPage({ params }: PageProps<"/semaine/[start]">) {
   const { start } = await params;

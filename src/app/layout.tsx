@@ -10,9 +10,10 @@ export const metadata: Metadata = {
   title: "Bilan énergie",
   description: "Production solaire et consommation de la maison, semaine par semaine.",
   applicationName: "Bilan énergie",
-  // Web app plein écran sur iPhone : la barre d'état est transparente et la page passe dessous,
-  // d'où la zone de sécurité gérée dans le header (voir plus bas).
-  appleWebApp: { capable: true, title: "Énergie", statusBarStyle: "black-translucent" },
+  // Web app plein écran sur iPhone. Barre d'état « default » : iOS la dessine opaque au-dessus
+  // de la page (aucun contenu dessous). Le mode « black-translucent » laissait la page passer
+  // sous la barre d'état, où iOS applique son propre effet de flou en bord d'écran.
+  appleWebApp: { capable: true, title: "Énergie", statusBarStyle: "default" },
   formatDetection: { telephone: false },
 };
 
@@ -29,12 +30,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="fr" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col">
-        {/* Bande opaque sous la barre d'état : le contenu qui défile ne transparaît (ni ne floute) jamais dedans. */}
-        <div
-          aria-hidden
-          className="fixed inset-x-0 top-0 z-50 bg-background"
-          style={{ height: "env(safe-area-inset-top)" }}
-        />
         <header
           className="sticky top-0 z-40 border-b border-border bg-background"
           style={{ paddingTop: "env(safe-area-inset-top)" }}

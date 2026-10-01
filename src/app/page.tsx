@@ -7,7 +7,8 @@ import { StatTile } from "@/components/StatTile";
 import { eur, kwh, num, pct, weekLabel } from "@/lib/format";
 import { fetchReports, isConfigured } from "@/lib/supabase";
 
-export const revalidate = 3600;
+// 5 min : un bilan relancé dans HA apparaît vite, et les deux pages restent cohérentes.
+export const revalidate = 300;
 
 export default async function HomePage() {
   if (!isConfigured()) {
