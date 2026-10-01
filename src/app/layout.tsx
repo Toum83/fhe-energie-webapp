@@ -36,7 +36,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           style={{ height: "env(safe-area-inset-top)" }}
         />
         <header
-          className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl backdrop-saturate-150"
+          className="sticky top-0 z-40 border-b border-border bg-background"
           style={{ paddingTop: "env(safe-area-inset-top)" }}
         >
           <div

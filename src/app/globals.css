@@ -63,7 +63,7 @@ html {
 
 body {
   background:
-    radial-gradient(120% 60% at 50% -10%, var(--glow), transparent 70%),
+    radial-gradient(120% 420px at 50% 300px, var(--glow), transparent 70%),
     var(--background);
   background-repeat: no-repeat;
   color: var(--foreground);
