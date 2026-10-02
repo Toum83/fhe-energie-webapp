@@ -57,13 +57,14 @@
 }
 
 html {
-  background: var(--background);
+  /* Même aplat que le bandeau supérieur : aucune zone claire ne peut apparaître en haut. */
+  background: #171715;
   -webkit-text-size-adjust: 100%;
 }
 
 body {
   background:
-    radial-gradient(120% 420px at 50% 300px, var(--glow), transparent 70%),
+    radial-gradient(120% 420px at 50% 120px, var(--glow), transparent 70%),
     var(--background);
   background-repeat: no-repeat;
   color: var(--foreground);

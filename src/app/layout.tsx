@@ -10,20 +10,17 @@ export const metadata: Metadata = {
   title: "Bilan énergie",
   description: "Production solaire et consommation de la maison, semaine par semaine.",
   applicationName: "Bilan énergie",
-  // Web app plein écran sur iPhone. Barre d'état « default » : iOS la dessine opaque au-dessus
-  // de la page (aucun contenu dessous). Le mode « black-translucent » laissait la page passer
-  // sous la barre d'état, où iOS applique son propre effet de flou en bord d'écran.
-  appleWebApp: { capable: true, title: "Énergie", statusBarStyle: "default" },
+  // Web app plein écran sur iPhone, comme les autres apps du projet : barre d'état translucide
+  // (texte blanc) posée sur un bandeau supérieur foncé et uni. Sous la barre d'état il n'y a
+  // donc que de l'aplat sombre : rien de clair ni de dégradé à voir flouter par iOS.
+  appleWebApp: { capable: true, title: "Énergie", statusBarStyle: "black-translucent" },
   formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
   // viewport-fit=cover : indispensable pour que env(safe-area-inset-*) soit renseigné.
   viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f3f2ee" },
-    { media: "(prefers-color-scheme: dark)", color: "#0e0e0d" },
-  ],
+  themeColor: "#171715",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -31,8 +28,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="fr" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="flex h-dvh flex-col overflow-hidden">
         <header
-          className="shrink-0 border-b border-border bg-background"
-          style={{ paddingTop: "env(safe-area-inset-top)" }}
+          className="shrink-0 text-white"
+          style={{ paddingTop: "env(safe-area-inset-top)", backgroundColor: "#171715" }}
         >
           <div
             className="mx-auto flex w-full max-w-3xl items-center justify-between py-3"
@@ -54,7 +51,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               </span>
               <span className="text-[1.05rem] font-semibold tracking-tight">Bilan énergie</span>
             </Link>
-            <span className="rounded-full border border-border bg-surface px-2.5 py-1 text-[11px] font-medium text-muted">
+            <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/75">
               FHE × HA
             </span>
           </div>
