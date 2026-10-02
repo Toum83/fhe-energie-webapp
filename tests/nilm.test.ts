@@ -129,3 +129,54 @@ test("un cluster non nommé qui disparaît est supprimé", () => {
   const result = runPipeline([], existing);
   assert.deepEqual(result.delete_ids, [9]);
 });
+
+/** Événement avec niveaux avant/après, comme les renvoie nilm_get_events. */
+function lev(ts: string, before: number, after: number, production = 0): PowerEvent {
+  return {
+    id: nextId++,
+    ts,
+    delta_w: after - before,
+    power_before: before,
+    power_after: after,
+    direction: after > before ? "on" : "off",
+    production_power: production,
+  };
+}
+
+test("gros appareil à arrêt progressif (chauffe-eau) : fermé au retour au niveau de départ", () => {
+  nextId = 1;
+  // Base 300 W, chauffe-eau +1700 W à 11:30, puissance qui décroît, coupure en 2 paliers vers 14:20.
+  const events = [
+    lev(at(1, 11, 30), 300, 2000, 2500),
+    lev(at(1, 13, 0), 2000, 1500, 3000), // décroissance (palier -500 W)
+    lev(at(1, 14, 15), 1500, 900, 2500), // palier -600 W
+    lev(at(1, 14, 20), 900, 320, 2000), // retour à la base
+  ];
+  const { sessions } = pairSessions(mergeEvents(events));
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].power_w, 1700);
+  // Les 2 derniers paliers (14:15 puis 14:20) sont un seul échelon : l'arrêt est daté du premier.
+  assert.equal(sessions[0].duration_min, 165);
+  assert.equal(sessions[0].pct_solar, 1);
+});
+
+test("petit appareil : l'appariement reste par magnitude, même avec les niveaux", () => {
+  nextId = 1;
+  // Télé 300 W pendant qu'un autre appareil (800 W) s'arrête : le retour au niveau la fermerait à tort.
+  const events = [
+    lev(at(1, 20, 0), 500, 1300), // appareil 800 W
+    lev(at(1, 20, 10), 1300, 1600), // télé 300 W
+    lev(at(1, 20, 40), 1600, 800), // l'appareil 800 W s'arrête
+    lev(at(1, 22, 0), 800, 500), // la télé s'arrête
+  ];
+  const { sessions } = pairSessions(mergeEvents(events));
+  const tele = sessions.find((s) => s.power_w === 300)!;
+  assert.equal(tele.duration_min, 110);
+});
+
+test("sans niveaux (ancienne fonction SQL) : retombe sur l'appariement par magnitude", () => {
+  nextId = 1;
+  const events = [ev(at(1, 11, 30), 1700), ev(at(1, 13, 0), -500), ev(at(1, 14, 20), -1200)];
+  const { sessions } = pairSessions(mergeEvents(events));
+  assert.equal(sessions.length, 1); // le palier final -1200 W est dans la tolérance de 35 %
+});

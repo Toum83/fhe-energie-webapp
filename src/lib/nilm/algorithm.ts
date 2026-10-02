@@ -9,6 +9,9 @@ export type PowerEvent = {
   id: number;
   ts: string; // ISO
   delta_w: number;
+  /** Puissance juste avant / juste après l'échelon (absente des anciennes versions de nilm_get_events). */
+  power_before?: number | null;
+  power_after?: number | null;
   direction: "on" | "off";
   production_power: number | null;
 };
@@ -62,6 +65,16 @@ export const PARAMS = {
   /** Tolérance de magnitude entre un ON et son OFF : max(35 % du ON, 250 W). */
   pairRelTol: 0.35,
   pairAbsTolW: 250,
+  /**
+   * Gros appareils : à partir de ce ON, l'arrêt est reconnu au retour au niveau d'avant le
+   * démarrage (± max(25 %, 150 W)), même s'il se fait en plusieurs paliers. Cas typique : un
+   * chauffe-eau dont la puissance décroît avant de couper. Validé sur les données réelles du
+   * 25/09 au 02/10/2026 : chauffe-eau 4 → 7 sessions, autres appareils inchangés ; les petits
+   * appareils gardent l'appariement par magnitude (le retour au niveau les dégradait).
+   */
+  levelPairMinW: 1000,
+  levelRelTol: 0.25,
+  levelAbsTolW: 150,
   /** Echelles fixes (pas des z-scores recalculés : le sens d'eps ne doit pas dériver avec le volume). */
   powerLogScale: 0.25, // ±25 % de puissance
   durationLogScale: 0.7, // facteur ~2 sur la durée
@@ -88,10 +101,11 @@ export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
       last.direction === e.direction &&
       (ts(e.ts) - ts(last.ts)) / 1000 <= PARAMS.mergeWindowS
     ) {
-      // On garde l'id du premier ; l'instant final et l'amplitude cumulée.
+      // On garde l'id et l'instant du premier relevé (début de l'échelon), l'amplitude cumulée et le niveau final.
       out[out.length - 1] = {
         ...last,
         delta_w: last.delta_w + e.delta_w,
+        power_after: e.power_after ?? last.power_after,
         production_power: e.production_power ?? last.production_power,
       };
     } else {
@@ -112,13 +126,29 @@ export function pairSessions(merged: PowerEvent[]): { sessions: Session[]; unpai
     const on = merged[i];
     if (on.direction !== "on" || on.delta_w <= 0) continue;
     let best: { err: number; j: number } | null = null;
-    for (let j = i + 1; j < merged.length; j++) {
-      const off = merged[j];
-      if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
-      if (off.direction !== "off" || used.has(j)) continue;
-      const err = Math.abs(-off.delta_w - on.delta_w);
-      if (err <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW) && (!best || err < best.err)) {
-        best = { err, j };
+    const byLevel = on.delta_w >= PARAMS.levelPairMinW && on.power_before != null;
+    if (byLevel) {
+      // Premier OFF qui ramène la puissance au niveau d'avant le démarrage.
+      const ceiling = on.power_before! + Math.max(PARAMS.levelRelTol * on.delta_w, PARAMS.levelAbsTolW);
+      for (let j = i + 1; j < merged.length; j++) {
+        const off = merged[j];
+        if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
+        if (off.direction !== "off" || used.has(j)) continue;
+        if (off.power_after != null && off.power_after <= ceiling) {
+          best = { err: 0, j };
+          break;
+        }
+      }
+    }
+    if (!best) {
+      for (let j = i + 1; j < merged.length; j++) {
+        const off = merged[j];
+        if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
+        if (off.direction !== "off" || used.has(j)) continue;
+        const err = Math.abs(-off.delta_w - on.delta_w);
+        if (err <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW) && (!best || err < best.err)) {
+          best = { err, j };
+        }
       }
     }
     if (!best) continue;
@@ -131,7 +161,8 @@ export function pairSessions(merged: PowerEvent[]): { sessions: Session[]; unpai
       off_event_id: off.id,
       start_ts: on.ts,
       end_ts: off.ts,
-      power_w: Math.round((on.delta_w + -off.delta_w) / 2),
+      // Arrêt par paliers : seul le démarrage reflète la puissance nominale.
+      power_w: Math.round(byLevel && best.err === 0 ? on.delta_w : (on.delta_w + -off.delta_w) / 2),
       duration_min: Math.round(durationMin * 10) / 10,
       pct_solar: solarPoints / 2,
     });
