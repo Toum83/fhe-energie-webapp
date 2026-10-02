@@ -51,9 +51,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               </span>
               <span className="text-[1.05rem] font-semibold tracking-tight">Bilan énergie</span>
             </Link>
-            <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/75">
-              FHE × HA
-            </span>
+            <Link href="/appareils" className="press rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-medium text-white/85">
+              Appareils
+            </Link>
           </div>
         </header>
         {/*
