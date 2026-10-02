@@ -180,3 +180,16 @@ test("sans niveaux (ancienne fonction SQL) : retombe sur l'appariement par magni
   const { sessions } = pairSessions(mergeEvents(events));
   assert.equal(sessions.length, 1); // le palier final -1200 W est dans la tolérance de 35 %
 });
+
+test("part solaire : la production du crépuscule ne compte pas comme une session solaire", () => {
+  nextId = 1;
+  // Four 1700 W lancé à 19 h avec 120 W de production : environ 7 % couvert, pas 100 %.
+  const dusk = pairSessions(mergeEvents([ev(at(1, 19, 0), 1700, 120), ev(at(1, 19, 10), -1700, 120)])).sessions[0];
+  assert.equal(dusk.pct_solar, 0.07);
+  // À midi avec 3 kW de production : entièrement couvert (plafonné à 100 %).
+  const noon = pairSessions(mergeEvents([ev(at(1, 12, 0), 1700, 3000), ev(at(1, 12, 10), -1700, 3000)])).sessions[0];
+  assert.equal(noon.pct_solar, 1);
+  // La nuit : 0.
+  const night = pairSessions(mergeEvents([ev(at(1, 22, 0), 1700, 0), ev(at(1, 22, 10), -1700, 0)])).sessions[0];
+  assert.equal(night.pct_solar, 0);
+});

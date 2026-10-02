@@ -110,7 +110,7 @@ export function ClusterCard({ cluster, index }: { cluster: ClusterView; index: n
         </div>
         <p className="mt-2 text-xs text-muted">
           Heures de démarrage (à titre indicatif, jamais utilisées pour reconnaître l&apos;appareil)
-          {cluster.avg_pct_solar != null ? ` · ${Math.round(cluster.avg_pct_solar * 100)} % pendant la production solaire` : ""}.
+          {cluster.avg_pct_solar != null ? ` · environ ${Math.round(cluster.avg_pct_solar * 100)} % de sa consommation couverte par le solaire (estimation haute)` : ""}.
         </p>
       </div>
 

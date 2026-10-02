@@ -23,7 +23,11 @@ export type Session = {
   end_ts: string;
   power_w: number;
   duration_min: number;
-  /** Part de la session pendant la production solaire (0..1), d'après les 2 événements. */
+  /**
+   * Part estimée de la consommation de l'appareil couverte par le solaire (0..1) :
+   * production / puissance de l'appareil, plafonnée à 1, moyennée sur le démarrage et l'arrêt.
+   * Estimation haute : les autres appareils en marche se partagent aussi la production.
+   */
   pct_solar: number;
 };
 
@@ -85,7 +89,6 @@ export const PARAMS = {
   /** Reprise d'un cluster non nommé existant si son centroïde est à <= 1. */
   reuseRadius: 1,
   timeZone: "Europe/Paris",
-  solarThresholdW: 50,
 } as const;
 
 const ts = (iso: string) => new Date(iso).getTime();
@@ -155,16 +158,19 @@ export function pairSessions(merged: PowerEvent[]): { sessions: Session[]; unpai
     const off = merged[best.j];
     used.add(best.j);
     const durationMin = (ts(off.ts) - ts(on.ts)) / 60000;
-    const solarPoints = [on, off].filter((e) => (e.production_power ?? 0) > PARAMS.solarThresholdW).length;
+    // Un simple seuil de production (ex. > 50 W) comptait comme « solaire » un four de 1,7 kW
+    // lancé au crépuscule avec 120 W de production : on mesure plutôt la part couverte.
+    const powerW = byLevel && best.err === 0 ? on.delta_w : (on.delta_w + -off.delta_w) / 2;
+    const coverage = (e: PowerEvent) => Math.min(Math.max(e.production_power ?? 0, 0) / Math.max(powerW, 1), 1);
     sessions.push({
       on_event_id: on.id,
       off_event_id: off.id,
       start_ts: on.ts,
       end_ts: off.ts,
       // Arrêt par paliers : seul le démarrage reflète la puissance nominale.
-      power_w: Math.round(byLevel && best.err === 0 ? on.delta_w : (on.delta_w + -off.delta_w) / 2),
+      power_w: Math.round(powerW),
       duration_min: Math.round(durationMin * 10) / 10,
-      pct_solar: solarPoints / 2,
+      pct_solar: Math.round(((coverage(on) + coverage(off)) / 2) * 100) / 100,
     });
   }
   const onCount = merged.filter((e) => e.direction === "on").length;
