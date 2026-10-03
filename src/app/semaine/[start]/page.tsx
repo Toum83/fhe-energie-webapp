@@ -7,6 +7,8 @@ import { Ring } from "@/components/Ring";
 import { StatTile } from "@/components/StatTile";
 import { eur, kwh, longDate, num, pct, shortWeekday, weekLabel } from "@/lib/format";
 import { fetchReport, fetchReports } from "@/lib/supabase";
+import { DeviceBreakdown } from "@/components/nilm/DeviceBreakdown";
+import { dbConfigured, fetchWeekBreakdown, type DeviceWeek } from "@/lib/nilm/db";
 
 // 5 min : un bilan relancé dans HA apparaît vite, et les deux pages restent cohérentes.
 export const revalidate = 300;
@@ -16,6 +18,16 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) notFound();
   const [report, all] = await Promise.all([fetchReport(start), fetchReports(52)]);
   if (!report) notFound();
+
+  // Bilan par appareil (module NILM) : facultatif, la page reste complète sans lui.
+  let devices: DeviceWeek[] = [];
+  if (dbConfigured()) {
+    try {
+      devices = await fetchWeekBreakdown(start);
+    } catch {
+      devices = [];
+    }
+  }
 
   // `all` est trié du plus récent au plus ancien : index+1 = semaine précédente.
   const i = all.findIndex((r) => r.start_date === start);
@@ -122,6 +134,10 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
         <h2 className="mb-4 text-base font-semibold tracking-tight">Jour par jour</h2>
         <EnergyChart data={chartData} height={220} />
       </section>
+
+      {devices.length > 0 ? (
+        <DeviceBreakdown devices={devices} weekConsumptionKwh={report.consumption_kwh} index={7} />
+      ) : null}
 
       {/* Détail par jour */}
       <section className="rise" style={{ "--i": 7 } as React.CSSProperties}>

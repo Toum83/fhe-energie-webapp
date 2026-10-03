@@ -1,7 +1,10 @@
+import { headers } from "next/headers";
+import { CopyBlock } from "@/components/nilm/CopyBlock";
 import { RunButton } from "@/components/nilm/RunButton";
 import { ClusterCard } from "@/components/nilm/ClusterCard";
 import { adminConfigured, isAdmin } from "@/lib/nilm/auth";
 import { dbConfigured, fetchClusters, type StoredCluster } from "@/lib/nilm/db";
+import { haRestYaml } from "@/lib/nilm/ha";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Appareils · Bilan énergie", robots: { index: false, follow: false } };
@@ -103,6 +106,8 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
         ))}
       </div>
 
+      {named > 0 ? <HaSetup clusters={clusters} host={(await headers()).get("host")} /> : null}
+
       <form action="/api/nilm/logout" method="post" className="px-1 pt-2">
         <button type="submit" className="text-xs text-faint underline-offset-4 hover:underline">
           Se déconnecter
@@ -118,5 +123,39 @@ function Notice({ title, children }: { title: string; children: React.ReactNode 
       <h2 className="mb-1 font-semibold">{title}</h2>
       <p className="text-sm leading-relaxed text-muted">{children}</p>
     </div>
+  );
+}
+
+function HaSetup({ clusters, host }: { clusters: StoredCluster[]; host: string | null }) {
+  const devices = clusters
+    .filter((c) => c.label && c.label.trim())
+    .map((c) => ({ cluster_id: c.id, label: c.label!.trim() }));
+  const url = `https://${host ?? "votre-app.vercel.app"}/api/nilm/devices`;
+  return (
+    <section className="card rise p-5">
+      <h2 className="text-base font-semibold tracking-tight">Capteurs dans Home Assistant</h2>
+      <p className="mt-1 text-sm leading-relaxed text-muted">
+        Un capteur d&apos;énergie par appareil nommé, mis à jour toutes les 15 minutes, utilisable dans le tableau de bord
+        Énergie (appareils individuels). À refaire quand vous nommez un nouvel appareil ; renommer ne change rien.
+      </p>
+      <ol className="mt-4 flex list-decimal flex-col gap-3 pl-5 text-sm text-muted">
+        <li>
+          Dans <code>secrets.yaml</code> de HA, ajoutez (le jeton est celui de cette page) :
+          <div className="mt-2">
+            <CopyBlock
+              label="Copier les secrets"
+              text={`nilm_devices_url: ${url}\nnilm_admin_bearer: "Bearer VOTRE_NILM_ADMIN_TOKEN"`}
+            />
+          </div>
+        </li>
+        <li>
+          Collez ce bloc à la fin du package <code>packages/fhe_energy.yaml</code> (ou remplacez l&apos;ancien bloc
+          <code> rest:</code> s&apos;il existe), puis redémarrez Home Assistant :
+          <div className="mt-2">
+            <CopyBlock label="Copier le YAML" text={haRestYaml(devices)} />
+          </div>
+        </li>
+      </ol>
+    </section>
   );
 }

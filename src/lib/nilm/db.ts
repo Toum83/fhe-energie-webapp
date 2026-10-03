@@ -51,3 +51,18 @@ export const fetchClusters = () => rpc<StoredCluster[]>("nilm_get_clusters", {})
 export const saveClustering = (payload: unknown) => rpc<{ clusters: number; sessions: number }>("nilm_save_clustering", { payload });
 export const setLabel = (clusterId: number, label: string, icon: string | null) =>
   rpc<null>("nilm_set_label", { cluster_id: clusterId, new_label: label, new_icon: icon });
+
+export type DeviceWeek = {
+  cluster_id: number;
+  label: string;
+  icon: string | null;
+  energy_kwh: number;
+  sessions: number;
+  solar_share: number | null;
+};
+export type DeviceTotal = { cluster_id: number; label: string; icon: string | null; total_kwh: number };
+
+/** Bilan d'une semaine (lundi) par appareil nommé. */
+export const fetchWeekBreakdown = (weekStart: string) => rpc<DeviceWeek[]>("nilm_week_breakdown", { week_start: weekStart });
+/** Compteurs cumulés par appareil nommé, jamais décroissants (capteurs HA total_increasing). */
+export const fetchDeviceTotals = () => rpc<DeviceTotal[]>("nilm_device_totals", {});

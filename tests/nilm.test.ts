@@ -193,3 +193,17 @@ test("part solaire : la production du crépuscule ne compte pas comme une sessio
   const night = pairSessions(mergeEvents([ev(at(1, 22, 0), 1700, 0), ev(at(1, 22, 10), -1700, 0)])).sessions[0];
   assert.equal(night.pct_solar, 0);
 });
+
+test("YAML HA : identifiant et valeur basés sur cluster_id, pas sur le nom", async () => {
+  const { haRestYaml } = await import("../src/lib/nilm/ha.ts");
+  const yaml = haRestYaml([
+    { cluster_id: 4, label: "Chauffe-eau en haut" },
+    { cluster_id: 12, label: 'Four "pro"' },
+  ]);
+  assert.match(yaml, /unique_id: fhe_nilm_cluster_4\n/);
+  assert.match(yaml, /value_template: "\{\{ value_json\.by_id\['4'\] \}\}"/);
+  assert.match(yaml, /state_class: total_increasing/);
+  assert.match(yaml, /# chauffe_eau_en_haut \(appareil n°4\)/);
+  assert.match(yaml, /name: "NILM Four 'pro'"/); // guillemets neutralisés
+  assert.match(yaml, /Authorization: !secret nilm_admin_bearer/);
+});

@@ -74,7 +74,7 @@ export function ClusterCard({ cluster, index }: { cluster: ClusterView; index: n
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-lg font-semibold tracking-tight">{named ? cluster.label : `Appareil n°${cluster.id}`}</h3>
-          <p className="text-xs text-muted">{named ? "Nommé" : "À nommer"}</p>
+          <p className="text-xs text-muted">{named ? `Nommé · n°${cluster.id}` : "À nommer"}</p>
         </div>
       </header>
 
