@@ -225,3 +225,33 @@ test("couverture : semaine partielle quand la détection démarre en cours de se
   // Passage de mois : lundi 28/09 -> dimanche 04/10.
   assert.equal(weekCoverage("2026-09-28", "2026-10-01").coveredDays, 4);
 });
+
+test("chauffe-eau démarré avec une bouilloire : la puissance est révélée quand la bouilloire coupe", async () => {
+  nextId = 1;
+  // Base 290 W. 11:30 chauffe-eau + bouilloire ensemble (+3 870 W), 11:40 la bouilloire coupe
+  // (reste 1 943 W, soit +1 653 W), puis décroissance et retour à la base à 13:40.
+  const events = [
+    lev(at(4, 11, 30), 290, 4160),
+    lev(at(4, 11, 40), 4160, 1943),
+    lev(at(4, 12, 50), 1943, 1600),
+    lev(at(4, 13, 40), 1257, 400),
+  ];
+  const { sessions } = pairSessions(mergeEvents(events));
+  const long = sessions.find((s) => s.duration_min >= 60)!;
+  assert.equal(long.power_w, 1653);
+  assert.equal(long.duration_min, 130);
+});
+
+test("session courte (four 30 min) : la hauteur du saut est gardée, pas de révélation", () => {
+  nextId = 1;
+  // Four : +1 700 W, le thermostat coupe à 11 min (palier bas), relance, arrêt à 30 min.
+  const events = [
+    lev(at(2, 18, 30), 300, 2000),
+    lev(at(2, 18, 41), 2000, 900),
+    lev(at(2, 18, 46), 900, 2000),
+    lev(at(2, 19, 0), 2000, 310),
+  ];
+  const { sessions } = pairSessions(mergeEvents(events));
+  const four = sessions.find((s) => s.duration_min >= 25)!;
+  assert.equal(four.power_w, 1700);
+});

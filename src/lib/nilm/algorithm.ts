@@ -77,6 +77,19 @@ export const PARAMS = {
    * appareils gardent l'appariement par magnitude (le retour au niveau les dégradait).
    */
   levelPairMinW: 1000,
+  /**
+   * Session longue (>= 60 min) à arrêt par retour au niveau : si un arrêt survient dans les
+   * 20 premières minutes et laisse un surplus entre 30 % et 90 % du saut de départ, c'est un autre
+   * appareil, démarré en même temps, qui vient de s'arrêter : ce surplus est la vraie puissance.
+   * Cas réel du 04/10/2026 : chauffe-eau + bouilloire = saut de 3 866 W, puis la bouilloire coupe
+   * et laisse 1 653 W. Validé sur le 25/09 → 04/10/2026 : chauffe-eau 9 sessions au lieu de 8 avec
+   * la carte nommée, autres appareils identiques. (Une médiane du surplus sur toute la session a été
+   * écartée : la puissance du chauffe-eau décroît pendant la chauffe, la médiane le sous-estimait.)
+   */
+  revealMinMinutes: 60,
+  revealWindowMin: 20,
+  revealMinRatio: 0.3,
+  revealMaxRatio: 0.9,
   levelRelTol: 0.25,
   levelAbsTolW: 150,
   /** Echelles fixes (pas des z-scores recalculés : le sens d'eps ne doit pas dériver avec le volume). */
@@ -158,9 +171,13 @@ export function pairSessions(merged: PowerEvent[]): { sessions: Session[]; unpai
     const off = merged[best.j];
     used.add(best.j);
     const durationMin = (ts(off.ts) - ts(on.ts)) / 60000;
+    let powerW = byLevel && best.err === 0 ? on.delta_w : (on.delta_w + -off.delta_w) / 2;
+    if (byLevel && best.err === 0 && durationMin >= PARAMS.revealMinMinutes) {
+      const revealed = revealedPowerW(merged, i, best.j);
+      if (revealed != null) powerW = revealed;
+    }
     // Un simple seuil de production (ex. > 50 W) comptait comme « solaire » un four de 1,7 kW
     // lancé au crépuscule avec 120 W de production : on mesure plutôt la part couverte.
-    const powerW = byLevel && best.err === 0 ? on.delta_w : (on.delta_w + -off.delta_w) / 2;
     const coverage = (e: PowerEvent) => Math.min(Math.max(e.production_power ?? 0, 0) / Math.max(powerW, 1), 1);
     sessions.push({
       on_event_id: on.id,
@@ -177,6 +194,24 @@ export function pairSessions(merged: PowerEvent[]): { sessions: Session[]; unpai
   const offCount = merged.filter((e) => e.direction === "off").length;
   const unpaired = onCount - sessions.length + (offCount - sessions.length);
   return { sessions, unpaired };
+}
+
+/**
+ * Puissance propre d'un gros appareil dont le démarrage (merged[i]) a coïncidé avec celui d'un
+ * appareil bref : le premier arrêt dans les `revealWindowMin` minutes qui laisse un surplus entre
+ * `revealMinRatio` et `revealMaxRatio` du saut de départ révèle l'appareil seul. null sinon.
+ */
+export function revealedPowerW(merged: PowerEvent[], i: number, j: number): number | null {
+  const on = merged[i];
+  if (on.power_before == null) return null;
+  for (let k = i + 1; k < j; k++) {
+    const e = merged[k];
+    if ((ts(e.ts) - ts(on.ts)) / 60000 > PARAMS.revealWindowMin) break;
+    if (e.direction !== "off" || e.power_after == null) continue;
+    const excess = e.power_after - on.power_before;
+    if (excess >= PARAMS.revealMinRatio * on.delta_w && excess <= PARAMS.revealMaxRatio * on.delta_w) return excess;
+  }
+  return null;
 }
 
 type Feature = [number, number];
