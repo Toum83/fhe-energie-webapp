@@ -207,3 +207,21 @@ test("YAML HA : identifiant et valeur basés sur cluster_id, pas sur le nom", as
   assert.match(yaml, /name: "NILM Four 'pro'"/); // guillemets neutralisés
   assert.match(yaml, /Authorization: !secret nilm_admin_bearer/);
 });
+
+test("couverture : semaine partielle quand la détection démarre en cours de semaine", async () => {
+  const { weekCoverage } = await import("../src/lib/nilm/coverage.ts");
+  // Semaine du lundi 21/09/2026, détection active depuis le vendredi 25/09 : 3 jours (ven, sam, dim).
+  const c = weekCoverage("2026-09-21", "2026-09-25");
+  assert.equal(c.coveredDays, 3);
+  assert.equal(c.partial, true);
+  assert.deepEqual(c.dates, ["2026-09-25", "2026-09-26", "2026-09-27"]);
+  // Semaine suivante : entièrement couverte.
+  const full = weekCoverage("2026-09-28", "2026-09-25");
+  assert.equal(full.coveredDays, 7);
+  assert.equal(full.partial, false);
+  // Détection pas encore démarrée, ou date inconnue.
+  assert.equal(weekCoverage("2026-09-14", "2026-09-25").coveredDays, 0);
+  assert.equal(weekCoverage("2026-09-21", null).partial, false);
+  // Passage de mois : lundi 28/09 -> dimanche 04/10.
+  assert.equal(weekCoverage("2026-09-28", "2026-10-01").coveredDays, 4);
+});

@@ -66,3 +66,6 @@ export type DeviceTotal = { cluster_id: number; label: string; icon: string | nu
 export const fetchWeekBreakdown = (weekStart: string) => rpc<DeviceWeek[]>("nilm_week_breakdown", { week_start: weekStart });
 /** Compteurs cumulés par appareil nommé, jamais décroissants (capteurs HA total_increasing). */
 export const fetchDeviceTotals = () => rpc<DeviceTotal[]>("nilm_device_totals", {});
+
+/** Date (YYYY-MM-DD, heure de Paris) du 1er événement ; null si la fonction SQL n'est pas encore installée. */
+export const fetchFirstEventDate = () => rpc<string | null>("nilm_first_event_date", {});

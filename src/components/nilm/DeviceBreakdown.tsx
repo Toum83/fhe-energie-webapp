@@ -1,9 +1,24 @@
+import type { Coverage } from "@/lib/nilm/coverage";
 import type { DeviceWeek } from "@/lib/nilm/db";
 
 const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
 
 /** Bilan de la semaine par appareil nommé (étape 3 du module NILM). */
-export function DeviceBreakdown({ devices, weekConsumptionKwh, index }: { devices: DeviceWeek[]; weekConsumptionKwh: number; index: number }) {
+const dayLabel = (iso: string) =>
+  new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long" }).format(new Date(`${iso}T12:00:00Z`));
+
+export function DeviceBreakdown({
+  devices,
+  weekConsumptionKwh,
+  coverage,
+  index,
+}: {
+  devices: DeviceWeek[];
+  /** Consommation des seuls jours couverts par la détection (le bilan complet si la semaine l'est). */
+  weekConsumptionKwh: number;
+  coverage: Coverage;
+  index: number;
+}) {
   const named = devices.reduce((a, d) => a + Number(d.energy_kwh), 0);
   const rest = Math.max(weekConsumptionKwh - named, 0);
   const max = Math.max(...devices.map((d) => Number(d.energy_kwh)), rest, 0.001);
@@ -14,6 +29,13 @@ export function DeviceBreakdown({ devices, weekConsumptionKwh, index }: { device
         <h2 className="text-base font-semibold tracking-tight">Par appareil</h2>
         <span className="text-xs text-muted">estimation</span>
       </div>
+      {coverage.partial ? (
+        <p className="mb-4 rounded-xl bg-[color-mix(in_oklab,#f5a524_16%,transparent)] px-3.5 py-2.5 text-xs leading-relaxed text-muted" role="note">
+          <strong className="font-semibold text-foreground">Semaine partielle.</strong> La détection des appareils est
+          active depuis le {dayLabel(coverage.dates[0])} : {coverage.coveredDays} jour{coverage.coveredDays > 1 ? "s" : ""} sur 7.
+          Les kWh par appareil, les pourcentages et « Reste » ne portent que sur ces jours.
+        </p>
+      ) : null}
       <ul className="flex flex-col gap-4">
         {devices.map((d, i) => {
           const kwh = Number(d.energy_kwh);
@@ -35,7 +57,7 @@ export function DeviceBreakdown({ devices, weekConsumptionKwh, index }: { device
               </div>
               <p className="mt-1.5 text-xs tabular-nums text-muted">
                 {d.sessions} utilisation{d.sessions > 1 ? "s" : ""}
-                {share != null ? ` · ${share} % de la conso de la semaine` : ""}
+                {share != null ? ` · ${share} % de la conso ${coverage.partial ? "des jours couverts" : "de la semaine"}` : ""}
                 {d.solar_share != null ? ` · ~${Math.round(Number(d.solar_share) * 100)} % couvert par le solaire` : ""}
               </p>
             </li>

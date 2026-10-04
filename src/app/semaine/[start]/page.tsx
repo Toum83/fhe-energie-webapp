@@ -8,7 +8,8 @@ import { StatTile } from "@/components/StatTile";
 import { eur, kwh, longDate, num, pct, shortWeekday, weekLabel } from "@/lib/format";
 import { fetchReport, fetchReports } from "@/lib/supabase";
 import { DeviceBreakdown } from "@/components/nilm/DeviceBreakdown";
-import { dbConfigured, fetchWeekBreakdown, type DeviceWeek } from "@/lib/nilm/db";
+import { dbConfigured, fetchFirstEventDate, fetchWeekBreakdown, type DeviceWeek } from "@/lib/nilm/db";
+import { weekCoverage } from "@/lib/nilm/coverage";
 
 // 5 min : un bilan relancé dans HA apparaît vite, et les deux pages restent cohérentes.
 export const revalidate = 300;
@@ -21,13 +22,23 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
 
   // Bilan par appareil (module NILM) : facultatif, la page reste complète sans lui.
   let devices: DeviceWeek[] = [];
+  let firstEvent: string | null = null;
   if (dbConfigured()) {
     try {
       devices = await fetchWeekBreakdown(start);
     } catch {
       devices = [];
     }
+    try {
+      firstEvent = await fetchFirstEventDate();
+    } catch {
+      firstEvent = null; // fonction SQL pas encore installée : on suppose la semaine couverte
+    }
   }
+  const coverage = weekCoverage(start, firstEvent);
+  const coveredConsumption = report.days
+    .filter((d) => coverage.dates.includes(d.date))
+    .reduce((a, d) => a + d.consumption_kwh, 0);
 
   // `all` est trié du plus récent au plus ancien : index+1 = semaine précédente.
   const i = all.findIndex((r) => r.start_date === start);
@@ -136,7 +147,7 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
       </section>
 
       {devices.length > 0 ? (
-        <DeviceBreakdown devices={devices} weekConsumptionKwh={report.consumption_kwh} index={7} />
+        <DeviceBreakdown devices={devices} weekConsumptionKwh={coverage.partial ? coveredConsumption : report.consumption_kwh} coverage={coverage} index={7} />
       ) : null}
 
       {/* Détail par jour */}
