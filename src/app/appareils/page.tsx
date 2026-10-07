@@ -1,9 +1,9 @@
 import { headers } from "next/headers";
 import { CopyBlock } from "@/components/nilm/CopyBlock";
 import { RunButton } from "@/components/nilm/RunButton";
-import { ClusterCard } from "@/components/nilm/ClusterCard";
+import { ClusterCard, SessionList, type SessionRow } from "@/components/nilm/ClusterCard";
 import { adminConfigured, isAdmin } from "@/lib/nilm/auth";
-import { dbConfigured, fetchClusters, type StoredCluster } from "@/lib/nilm/db";
+import { dbConfigured, fetchClusters, fetchRecentSessions, type RecentSession, type StoredCluster } from "@/lib/nilm/db";
 import { haRestYaml } from "@/lib/nilm/ha";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +56,21 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
   }
   const named = clusters.filter((c) => c.label).length;
 
+  // Facultatif : si la fonction SQL n'est pas encore installée, les cartes s'affichent sans la liste.
+  let recent: RecentSession[] = [];
+  try {
+    recent = await fetchRecentSessions(8);
+  } catch {
+    recent = [];
+  }
+  const byCluster = new Map<number | null, SessionRow[]>();
+  for (const r of recent) {
+    const rows = byCluster.get(r.cluster_id) ?? [];
+    rows.push(toRow(r));
+    byCluster.set(r.cluster_id, rows);
+  }
+  const isolated = byCluster.get(null) ?? [];
+
   return (
     <div className="flex flex-col gap-4">
       <section className="rise px-1" style={{ "--i": 0 } as React.CSSProperties}>
@@ -102,9 +117,20 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
               hourly: c.hourly,
               last_seen: c.last_seen,
             }}
+            sessions={byCluster.get(c.id) ?? []}
           />
         ))}
       </div>
+
+      {isolated.length > 0 ? (
+        <section className="card rise p-5">
+          <h2 className="text-base font-semibold tracking-tight">Sessions isolées</h2>
+          <p className="mt-1 text-sm leading-relaxed text-muted">
+            Marche/arrêt reconstitués mais rattachés à aucun appareil (signature trop rare pour l&apos;instant).
+          </p>
+          <SessionList sessions={isolated} title="Les plus récentes" />
+        </section>
+      ) : null}
 
       {named > 0 ? <HaSetup clusters={clusters} host={(await headers()).get("host")} /> : null}
 
@@ -115,6 +141,21 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
       </form>
     </div>
   );
+}
+
+const dayFmt = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", weekday: "short", day: "numeric", month: "short" });
+const timeFmt = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" });
+
+function toRow(r: RecentSession): SessionRow {
+  const start = new Date(r.start_ts);
+  return {
+    key: `${r.cluster_id ?? "x"}-${r.start_ts}`,
+    day: dayFmt.format(start),
+    start: timeFmt.format(start),
+    end: timeFmt.format(new Date(r.end_ts)),
+    power_w: Number(r.power_w),
+    duration_min: Number(r.duration_min),
+  };
 }
 
 function Notice({ title, children }: { title: string; children: React.ReactNode }) {

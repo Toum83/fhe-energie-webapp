@@ -15,6 +15,9 @@ export type ClusterView = {
   last_seen: string | null;
 };
 
+/** Session déjà formatée côté serveur (heure de Paris), pour éviter tout décalage d'hydratation. */
+export type SessionRow = { key: string; day: string; start: string; end: string; power_w: number; duration_min: number };
+
 const ICONS = ["🔥", "🚿", "🧺", "🍽️", "🍳", "☕", "📺", "💻", "❄️", "🔌"];
 const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
 
@@ -35,7 +38,7 @@ function hint(power: number, minutes: number): string | null {
   return null;
 }
 
-export function ClusterCard({ cluster, index }: { cluster: ClusterView; index: number }) {
+export function ClusterCard({ cluster, index, sessions = [] }: { cluster: ClusterView; index: number; sessions?: SessionRow[] }) {
   const router = useRouter();
   const [label, setLabel] = useState(cluster.label ?? "");
   const [icon, setIcon] = useState<string | null>(cluster.icon);
@@ -114,6 +117,8 @@ export function ClusterCard({ cluster, index }: { cluster: ClusterView; index: n
         </p>
       </div>
 
+      {sessions.length > 0 ? <SessionList sessions={sessions} /> : null}
+
       <form onSubmit={save} className="mt-5 flex flex-col gap-3">
         {tip && !named ? <p className="text-xs text-muted">Ça ressemble à : {tip}</p> : null}
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Icône">
@@ -153,6 +158,28 @@ export function ClusterCard({ cluster, index }: { cluster: ClusterView; index: n
         {state === "error" ? <p className="text-xs text-[#e5484d]">{error}</p> : null}
       </form>
     </article>
+  );
+}
+
+export function SessionList({ sessions, title = "Dernières sessions", open = false }: { sessions: SessionRow[]; title?: string; open?: boolean }) {
+  return (
+    <details className="group mt-4 rounded-2xl bg-surface-2 px-3.5 py-2.5" open={open}>
+      <summary className="cursor-pointer list-none text-xs font-semibold text-muted">
+        <span className="inline-block transition-transform group-open:rotate-90">›</span> {title} ({sessions.length})
+      </summary>
+      <ul className="mt-2 divide-y divide-border text-xs tabular-nums">
+        {sessions.map((s) => (
+          <li key={s.key} className="flex items-baseline justify-between gap-3 py-1.5">
+            <span className="min-w-0">
+              <span className="capitalize text-muted">{s.day}</span> · {s.start} → {s.end}
+            </span>
+            <span className="shrink-0 text-muted">
+              {nf.format(s.power_w)} W · {duration(s.duration_min)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

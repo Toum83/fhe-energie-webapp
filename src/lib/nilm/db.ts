@@ -67,5 +67,15 @@ export const fetchWeekBreakdown = (weekStart: string) => rpc<DeviceWeek[]>("nilm
 /** Compteurs cumulés par appareil nommé, jamais décroissants (capteurs HA total_increasing). */
 export const fetchDeviceTotals = () => rpc<DeviceTotal[]>("nilm_device_totals", {});
 
+export type RecentSession = {
+  cluster_id: number | null;
+  start_ts: string;
+  end_ts: string;
+  power_w: number;
+  duration_min: number;
+};
+/** Dernières sessions de chaque appareil, et sessions isolées (cluster_id null). */
+export const fetchRecentSessions = (perCluster = 8) => rpc<RecentSession[]>("nilm_recent_sessions", { per_cluster: perCluster });
+
 /** Date (YYYY-MM-DD, heure de Paris) du 1er événement ; null si la fonction SQL n'est pas encore installée. */
 export const fetchFirstEventDate = () => rpc<string | null>("nilm_first_event_date", {});
