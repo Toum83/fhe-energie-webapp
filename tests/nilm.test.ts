@@ -255,3 +255,37 @@ test("session courte (four 30 min) : la hauteur du saut est gardée, pas de rév
   const four = sessions.find((s) => s.duration_min >= 25)!;
   assert.equal(four.power_w, 1700);
 });
+
+test("appareil long en marche : compté au fur et à mesure, seulement s'il n'y a qu'un candidat", async () => {
+  const { runningSessions, mergeEvents, pairSessions } = await import("../src/lib/nilm/algorithm.ts");
+  const start = at(7, 11, 30);
+  const events: PowerEvent[] = [
+    { id: nextId++, ts: start, delta_w: 1650, direction: "on", production_power: 0, power_before: 300, power_after: 1950 },
+  ];
+  const merged = mergeEvents(events);
+  const { sessions } = pairSessions(merged);
+  const named = [
+    { id: 7, centroid_power_w: 1651, avg_duration_min: 162 }, // chauffe-eau
+    { id: 6, centroid_power_w: 1709, avg_duration_min: 5 }, // four : trop court pour être candidat
+    { id: 2, centroid_power_w: 325, avg_duration_min: 67 }, // autre puissance
+  ];
+  const now = (min: number) => new Date(start).getTime() + min * 60000;
+
+  assert.deepEqual(runningSessions(merged, sessions, named, now(20)), [], "trop tôt : pas encore compté");
+  const r = runningSessions(merged, sessions, named, now(60));
+  assert.equal(r.length, 1);
+  assert.equal(r[0].cluster_id, 7);
+  assert.equal(r[0].kwh, 1.65);
+  // Arrêt manqué : plafonné à la durée moyenne, puis abandonné au-delà de 4 h.
+  const shortHeater = [{ id: 7, centroid_power_w: 1651, avg_duration_min: 100 }];
+  assert.equal(runningSessions(merged, sessions, shortHeater, now(200))[0].kwh, 2.75); // 100 min au plus
+  assert.deepEqual(runningSessions(merged, sessions, named, now(241)), []);
+  // Deux appareils longs de même puissance : on ne choisit pas, compté à l'arrêt.
+  assert.deepEqual(runningSessions(merged, sessions, [...named, { id: 9, centroid_power_w: 1700, avg_duration_min: 90 }], now(60)), []);
+  // Une fois l'arrêt apparié, ce n'est plus une session en marche.
+  const closed = mergeEvents([
+    ...events,
+    { id: nextId++, ts: new Date(now(150)).toISOString(), delta_w: -1650, direction: "off", production_power: 0, power_before: 1950, power_after: 300 },
+  ]);
+  assert.deepEqual(runningSessions(closed, pairSessions(closed).sessions, named, now(160)), []);
+});

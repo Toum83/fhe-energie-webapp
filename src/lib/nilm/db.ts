@@ -64,8 +64,18 @@ export type DeviceTotal = { cluster_id: number; label: string; icon: string | nu
 
 /** Bilan d'une semaine (lundi) par appareil nommé. */
 export const fetchWeekBreakdown = (weekStart: string) => rpc<DeviceWeek[]>("nilm_week_breakdown", { week_start: weekStart });
-/** Compteurs cumulés par appareil nommé, jamais décroissants (capteurs HA total_increasing). */
-export const fetchDeviceTotals = () => rpc<DeviceTotal[]>("nilm_device_totals", {});
+/**
+ * Compteurs cumulés par appareil nommé, jamais décroissants (capteurs HA total_increasing).
+ * `running` : appareils longs encore en marche, comptés au fur et à mesure.
+ */
+export async function fetchDeviceTotals(running: { on_event_id: number; cluster_id: number; kwh: number }[] = []) {
+  try {
+    return await rpc<DeviceTotal[]>("nilm_device_totals", { running_sessions: running });
+  } catch {
+    // Fonction SQL pas encore mise à jour (sans paramètre) : comptage à l'arrêt seulement.
+    return rpc<DeviceTotal[]>("nilm_device_totals", {});
+  }
+}
 
 export type RecentSession = {
   cluster_id: number | null;

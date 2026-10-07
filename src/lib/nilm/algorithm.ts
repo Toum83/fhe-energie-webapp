@@ -375,6 +375,54 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
   };
 }
 
+export const RUNNING = {
+  /** Seuls les appareils longs avancent en cours de route ; les courts sont comptés à l'arrêt. */
+  minElapsedMin: 30,
+  /** Appareil nommé candidat : durée moyenne d'au moins ça. */
+  minClusterDurationMin: 60,
+  /**
+   * On n'avance pas au-delà de sa durée moyenne : si l'arrêt n'est jamais apparié (il arrive au
+   * chauffe-eau de s'éteindre en pente douce), l'erreur reste bornée à une chauffe moyenne ; une
+   * chauffe plus longue reçoit le reste à son arrêt.
+   */
+  maxDurationFactor: 1,
+};
+
+export type RunningSession = { on_event_id: number; cluster_id: number; kwh: number };
+
+/**
+ * Appareils longs encore en marche (démarrage sans arrêt apparié), pour que le compteur HA
+ * avance pendant la chauffe au lieu de tout recevoir d'un bloc à l'arrêt : une chauffe de
+ * 2 h 30 tombait sur une seule heure du tableau Énergie, avec de la « surestimation » en face.
+ * Rattachement par la puissance seule (la durée n'est pas encore connue), au seul appareil
+ * nommé long compatible ; en cas d'hésitation, rien n'est compté avant l'arrêt.
+ */
+export function runningSessions(
+  merged: PowerEvent[],
+  sessions: Session[],
+  named: { id: number; centroid_power_w: number; avg_duration_min: number }[],
+  nowMs: number,
+): RunningSession[] {
+  const paired = new Set(sessions.map((s) => s.on_event_id));
+  const long = named.filter((c) => c.avg_duration_min >= RUNNING.minClusterDurationMin);
+  const out: RunningSession[] = [];
+  for (let i = 0; i < merged.length; i++) {
+    const on = merged[i];
+    if (on.direction !== "on" || on.delta_w < PARAMS.levelPairMinW || paired.has(on.id)) continue;
+    const elapsedMin = (nowMs - ts(on.ts)) / 60000;
+    if (elapsedMin < RUNNING.minElapsedMin || elapsedMin * 60 > PARAMS.pairWindowS) continue;
+    const powerW = revealedPowerW(merged, i, merged.length) ?? on.delta_w;
+    const matches = long.filter(
+      (c) => Math.abs(Math.log(powerW) - Math.log(Math.max(c.centroid_power_w, 1))) / PARAMS.powerLogScale <= PARAMS.assignRadius,
+    );
+    if (matches.length !== 1) continue;
+    const c = matches[0];
+    const minutes = Math.min(elapsedMin, c.avg_duration_min * RUNNING.maxDurationFactor);
+    out.push({ on_event_id: on.id, cluster_id: c.id, kwh: Math.round((powerW * minutes) / 60) / 1000 });
+  }
+  return out;
+}
+
 export function runPipeline(events: PowerEvent[], existing: ExistingCluster[]): ClusteringResult {
   const merged = mergeEvents(events);
   const { sessions, unpaired } = pairSessions(merged);
