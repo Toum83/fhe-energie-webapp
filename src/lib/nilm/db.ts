@@ -68,7 +68,7 @@ export const fetchWeekBreakdown = (weekStart: string) => rpc<DeviceWeek[]>("nilm
  * Compteurs cumulés par appareil nommé, jamais décroissants (capteurs HA total_increasing).
  * `running` : appareils longs encore en marche, comptés au fur et à mesure.
  */
-export async function fetchDeviceTotals(running: { on_event_id: number; cluster_id: number; kwh: number }[] = []) {
+export async function fetchDeviceTotals(running: import("./algorithm").RunningSession[] = []) {
   try {
     return await rpc<DeviceTotal[]>("nilm_device_totals", { running_sessions: running });
   } catch {

@@ -376,32 +376,49 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
 }
 
 export const RUNNING = {
-  /** Seuls les appareils longs avancent en cours de route ; les courts sont comptés à l'arrêt. */
+  /**
+   * Confirmation avant de compter en direct : en dessous, un préchauffage de four (même
+   * puissance, 15 à 25 min) serait pris pour le chauffe-eau. Les courts sont comptés à l'arrêt.
+   */
   minElapsedMin: 30,
   /** Appareil nommé candidat : durée moyenne d'au moins ça. */
   minClusterDurationMin: 60,
-  /**
-   * On n'avance pas au-delà de sa durée moyenne : si l'arrêt n'est jamais apparié (il arrive au
-   * chauffe-eau de s'éteindre en pente douce), l'erreur reste bornée à une chauffe moyenne ; une
-   * chauffe plus longue reçoit le reste à son arrêt.
-   */
+  /** Rattrapage des minutes de confirmation : jamais plus que la durée moyenne de l'appareil. */
   maxDurationFactor: 1,
+  /**
+   * Avec la puissance mesurée de la maison : en dessous de cette part de sa puissance nominale
+   * au-dessus du niveau d'avant le démarrage, l'appareil est considéré arrêté (rien n'est crédité).
+   * Cas réel du 08/10/2026 : chauffe-eau coupé à 13 h 22, mais un autre appareil de ~700 W a
+   * retardé la détection de l'arrêt jusqu'à 14 h 20 ; il aurait été compté à sa place.
+   */
+  minShare: 0.5,
+  /** Plafond de la puissance attribuée : un autre appareil peut s'ajouter pendant la chauffe. */
+  maxShare: 1.1,
 };
 
-export type RunningSession = { on_event_id: number; cluster_id: number; kwh: number };
+/**
+ * `watts` : puissance actuellement attribuée à l'appareil ; `elapsed_min` : minutes depuis le
+ * démarrage (plafonnées), pour le rattrapage au tout premier relevé.
+ */
+export type RunningSession = { on_event_id: number; cluster_id: number; watts: number; elapsed_min: number };
 
 /**
  * Appareils longs encore en marche (démarrage sans arrêt apparié), pour que le compteur HA
- * avance pendant la chauffe au lieu de tout recevoir d'un bloc à l'arrêt : une chauffe de
- * 2 h 30 tombait sur une seule heure du tableau Énergie, avec de la « surestimation » en face.
- * Rattachement par la puissance seule (la durée n'est pas encore connue), au seul appareil
- * nommé long compatible ; en cas d'hésitation, rien n'est compté avant l'arrêt.
+ * avance pendant la chauffe au lieu de tout recevoir d'un bloc à l'arrêt. Rattachement par la
+ * puissance seule (la durée n'est pas encore connue), au seul appareil nommé long compatible ;
+ * en cas d'hésitation, rien n'est compté avant l'arrêt.
+ *
+ * `housePowerW` : consommation actuelle de la maison (envoyée par HA à chaque relevé). La
+ * puissance de l'appareil est alors mesurée (maison − niveau d'avant son démarrage) au lieu
+ * d'être supposée constante : le chauffe-eau décroît de 1,75 à ~1,3 kW pendant sa chauffe.
+ * Sans elle (ancienne config HA), on retombe sur la puissance nominale.
  */
 export function runningSessions(
   merged: PowerEvent[],
   sessions: Session[],
   named: { id: number; centroid_power_w: number; avg_duration_min: number }[],
   nowMs: number,
+  housePowerW: number | null = null,
 ): RunningSession[] {
   const paired = new Set(sessions.map((s) => s.on_event_id));
   const long = named.filter((c) => c.avg_duration_min >= RUNNING.minClusterDurationMin);
@@ -411,14 +428,23 @@ export function runningSessions(
     if (on.direction !== "on" || on.delta_w < PARAMS.levelPairMinW || paired.has(on.id)) continue;
     const elapsedMin = (nowMs - ts(on.ts)) / 60000;
     if (elapsedMin < RUNNING.minElapsedMin || elapsedMin * 60 > PARAMS.pairWindowS) continue;
-    const powerW = revealedPowerW(merged, i, merged.length) ?? on.delta_w;
+    const nominal = revealedPowerW(merged, i, merged.length) ?? on.delta_w;
     const matches = long.filter(
-      (c) => Math.abs(Math.log(powerW) - Math.log(Math.max(c.centroid_power_w, 1))) / PARAMS.powerLogScale <= PARAMS.assignRadius,
+      (c) => Math.abs(Math.log(nominal) - Math.log(Math.max(c.centroid_power_w, 1))) / PARAMS.powerLogScale <= PARAMS.assignRadius,
     );
     if (matches.length !== 1) continue;
     const c = matches[0];
-    const minutes = Math.min(elapsedMin, c.avg_duration_min * RUNNING.maxDurationFactor);
-    out.push({ on_event_id: on.id, cluster_id: c.id, kwh: Math.round((powerW * minutes) / 60) / 1000 });
+    let watts = nominal;
+    if (housePowerW != null && Number.isFinite(housePowerW) && on.power_before != null) {
+      const measured = housePowerW - on.power_before;
+      watts = measured < RUNNING.minShare * nominal ? 0 : Math.min(measured, RUNNING.maxShare * nominal);
+    }
+    out.push({
+      on_event_id: on.id,
+      cluster_id: c.id,
+      watts: Math.round(watts),
+      elapsed_min: Math.round(Math.min(elapsedMin, c.avg_duration_min * RUNNING.maxDurationFactor) * 10) / 10,
+    });
   }
   return out;
 }

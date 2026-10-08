@@ -258,9 +258,10 @@ test("session courte (four 30 min) : la hauteur du saut est gardée, pas de rév
 
 test("appareil long en marche : compté au fur et à mesure, seulement s'il n'y a qu'un candidat", async () => {
   const { runningSessions, mergeEvents, pairSessions } = await import("../src/lib/nilm/algorithm.ts");
-  const start = at(7, 11, 30);
+  // Chauffe-eau du 08/10/2026 : démarre à 11 h 34, maison à 260 W avant.
+  const start = at(8, 11, 34);
   const events: PowerEvent[] = [
-    { id: nextId++, ts: start, delta_w: 1650, direction: "on", production_power: 0, power_before: 300, power_after: 1950 },
+    { id: nextId++, ts: start, delta_w: 1758, direction: "on", production_power: 0, power_before: 260, power_after: 2018 },
   ];
   const merged = mergeEvents(events);
   const { sessions } = pairSessions(merged);
@@ -272,20 +273,24 @@ test("appareil long en marche : compté au fur et à mesure, seulement s'il n'y 
   const now = (min: number) => new Date(start).getTime() + min * 60000;
 
   assert.deepEqual(runningSessions(merged, sessions, named, now(20)), [], "trop tôt : pas encore compté");
-  const r = runningSessions(merged, sessions, named, now(60));
-  assert.equal(r.length, 1);
-  assert.equal(r[0].cluster_id, 7);
-  assert.equal(r[0].kwh, 1.65);
-  // Arrêt manqué : plafonné à la durée moyenne, puis abandonné au-delà de 4 h.
+  // Sans mesure de la maison : puissance nominale.
+  assert.deepEqual(runningSessions(merged, sessions, named, now(31)), [{ on_event_id: events[0].id, cluster_id: 7, watts: 1758, elapsed_min: 31 }]);
+  // Mesurée : 12 h 34, maison à 1 485 W -> 1 225 W pour le chauffe-eau (il décroît).
+  assert.equal(runningSessions(merged, sessions, named, now(60), 1485)[0].watts, 1225);
+  // 13 h 45 : chauffe-eau coupé, mais ~700 W d'un autre appareil -> arrêté (moins de 50 % du nominal).
+  assert.equal(runningSessions(merged, sessions, named, now(131), 927)[0].watts, 0);
+  // Un autre appareil s'ajoute pendant la chauffe -> plafonné à 110 % du nominal.
+  assert.equal(runningSessions(merged, sessions, named, now(60), 4000)[0].watts, Math.round(1.1 * 1758));
+  // Rattrapage plafonné à la durée moyenne, puis abandonné au-delà de 4 h.
   const shortHeater = [{ id: 7, centroid_power_w: 1651, avg_duration_min: 100 }];
-  assert.equal(runningSessions(merged, sessions, shortHeater, now(200))[0].kwh, 2.75); // 100 min au plus
+  assert.equal(runningSessions(merged, sessions, shortHeater, now(200))[0].elapsed_min, 100);
   assert.deepEqual(runningSessions(merged, sessions, named, now(241)), []);
   // Deux appareils longs de même puissance : on ne choisit pas, compté à l'arrêt.
   assert.deepEqual(runningSessions(merged, sessions, [...named, { id: 9, centroid_power_w: 1700, avg_duration_min: 90 }], now(60)), []);
   // Une fois l'arrêt apparié, ce n'est plus une session en marche.
   const closed = mergeEvents([
     ...events,
-    { id: nextId++, ts: new Date(now(150)).toISOString(), delta_w: -1650, direction: "off", production_power: 0, power_before: 1950, power_after: 300 },
+    { id: nextId++, ts: new Date(now(150)).toISOString(), delta_w: -1758, direction: "off", production_power: 0, power_before: 2018, power_after: 260 },
   ]);
   assert.deepEqual(runningSessions(closed, pairSessions(closed).sessions, named, now(160)), []);
 });
