@@ -289,3 +289,21 @@ test("appareil long en marche : compté au fur et à mesure, seulement s'il n'y 
   ]);
   assert.deepEqual(runningSessions(closed, pairSessions(closed).sessions, named, now(160)), []);
 });
+
+test("bilan : les cartes « Famille · détail » sont additionnées, les autres restent seules", async () => {
+  const { groupDevices, splitFamily } = await import("../src/lib/nilm/group.ts");
+  assert.deepEqual(splitFamily("Cuisine · Bouilloire & four"), { family: "Cuisine", detail: "Bouilloire & four" });
+  assert.deepEqual(splitFamily("Lave-linge"), { family: null, detail: "Lave-linge" });
+  const g = groupDevices([
+    { cluster_id: 6, label: "Cuisine · Bouilloire & four", icon: "☕", energy_kwh: 0.8, sessions: 10, solar_share: 0.5 },
+    { cluster_id: 12, label: "cuisine · Four pleine puissance", icon: "🔥", energy_kwh: 1.2, sessions: 4, solar_share: 0 },
+    { cluster_id: 7, label: "Chauffe-eau en haut", icon: "🚿", energy_kwh: 20, sessions: 7, solar_share: 0.3 },
+  ]);
+  assert.equal(g.length, 2);
+  assert.equal(g[0].label, "Chauffe-eau en haut");
+  assert.equal(g[1].label, "cuisine");
+  assert.equal(g[1].energy_kwh, 2);
+  assert.equal(g[1].sessions, 14);
+  assert.equal(g[1].solar_share, 0.2);
+  assert.deepEqual(g[1].parts.map((p) => p.label), ["Four pleine puissance", "Bouilloire & four"]);
+});

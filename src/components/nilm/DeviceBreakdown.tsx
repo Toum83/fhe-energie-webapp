@@ -1,5 +1,6 @@
 import type { Coverage } from "@/lib/nilm/coverage";
 import type { DeviceWeek } from "@/lib/nilm/db";
+import { groupDevices } from "@/lib/nilm/group";
 
 const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
 
@@ -19,9 +20,10 @@ export function DeviceBreakdown({
   coverage: Coverage;
   index: number;
 }) {
-  const named = devices.reduce((a, d) => a + Number(d.energy_kwh), 0);
+  const groups = groupDevices(devices);
+  const named = groups.reduce((a, d) => a + d.energy_kwh, 0);
   const rest = Math.max(weekConsumptionKwh - named, 0);
-  const max = Math.max(...devices.map((d) => Number(d.energy_kwh)), rest, 0.001);
+  const max = Math.max(...groups.map((d) => d.energy_kwh), rest, 0.001);
 
   return (
     <section className="card rise p-5" style={{ "--i": index } as React.CSSProperties}>
@@ -37,11 +39,11 @@ export function DeviceBreakdown({
         </p>
       ) : null}
       <ul className="flex flex-col gap-4">
-        {devices.map((d, i) => {
-          const kwh = Number(d.energy_kwh);
+        {groups.map((d, i) => {
+          const kwh = d.energy_kwh;
           const share = weekConsumptionKwh ? Math.round((100 * kwh) / weekConsumptionKwh) : null;
           return (
-            <li key={d.cluster_id}>
+            <li key={d.key}>
               <div className="mb-1.5 flex items-baseline justify-between gap-3">
                 <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
                   <span aria-hidden>{d.icon ?? "🔌"}</span>
@@ -58,8 +60,13 @@ export function DeviceBreakdown({
               <p className="mt-1.5 text-xs tabular-nums text-muted">
                 {d.sessions} utilisation{d.sessions > 1 ? "s" : ""}
                 {share != null ? ` · ${share} % de la conso ${coverage.partial ? "des jours couverts" : "de la semaine"}` : ""}
-                {d.solar_share != null ? ` · ~${Math.round(Number(d.solar_share) * 100)} % couvert par le solaire` : ""}
+                {d.solar_share != null ? ` · ~${Math.round(d.solar_share * 100)} % couvert par le solaire` : ""}
               </p>
+              {d.parts.length > 1 ? (
+                <p className="mt-1 text-xs leading-relaxed text-faint">
+                  dont {d.parts.map((p) => `${p.label} ${nf.format(p.energy_kwh)}`).join(" · ")} kWh
+                </p>
+              ) : null}
             </li>
           );
         })}
@@ -76,7 +83,8 @@ export function DeviceBreakdown({
       <p className="mt-4 text-xs leading-relaxed text-faint">
         Estimations basses : seules les utilisations reconnues par leur signature sont comptées. Les appareils non nommés,
         les petits appareils et la pompe à chaleur du thermodynamique restent dans « Reste ». Nommer un appareil dans
-        Appareils complète aussi les semaines passées.
+        Appareils complète aussi les semaines passées ; un nom « Famille · détail » (ex. « Cuisine · Bouilloire & four »)
+        additionne les cartes de la même famille.
       </p>
     </section>
   );
