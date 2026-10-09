@@ -5,7 +5,8 @@ import { fetchClusters, fetchEvents, saveClustering } from "./db";
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
 export async function runClustering(housePowerW: number | null = null) {
   const [events, existing] = await Promise.all([fetchEvents(), fetchClusters()]);
-  const result = runPipeline(events, existing);
+  const now = Date.now();
+  const result = runPipeline(events, existing, now);
   const saved = await saveClustering({
     clusters: result.clusters,
     sessions: result.sessions,
@@ -16,6 +17,6 @@ export async function runClustering(housePowerW: number | null = null) {
   const named = existing
     .filter((c) => c.label && c.label.trim())
     .map((c) => ({ id: c.id, centroid_power_w: Number(c.centroid_power_w), avg_duration_min: Number(c.avg_duration_min) }));
-  const running: RunningSession[] = runningSessions(merged, pairSessions(merged).sessions, named, Date.now(), housePowerW);
+  const running: RunningSession[] = runningSessions(merged, pairSessions(merged, now).sessions, named, now, housePowerW);
   return { stats: result.stats, saved, running };
 }

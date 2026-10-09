@@ -312,3 +312,26 @@ test("bilan : les cartes « Famille · détail » sont additionnées, les autres
   assert.equal(g[1].solar_share, 0.2);
   assert.deepEqual(g[1].parts.map((p) => p.label), ["Four pleine puissance", "Bouilloire & four"]);
 });
+
+test("gros appareil en marche : pas de rabattement sur un OFF voisin tant que sa fenêtre est ouverte", async () => {
+  const { runningSessions } = await import("../src/lib/nilm/algorithm.ts");
+  // 09/10/2026 : chauffe-eau 11 h 24 (221 -> 2 066 W), lave-vaisselle 11 h 54 (+1 680), arrêt du
+  // lave-vaisselle 12 h 24 (-1 885), arrêt du chauffe-eau 14 h 15 (1 452 -> 356 W).
+  const e = (id: number, hh: number, mm: number, d: number, before: number): PowerEvent => ({
+    id, ts: at(9, hh, mm), delta_w: d, direction: d > 0 ? "on" : "off", production_power: 0, power_before: before, power_after: before + d,
+  });
+  const live = [e(9001, 11, 24, 1845, 221), e(9002, 11, 54, 1680, 2066), e(9003, 12, 24, -1885, 3782)];
+  const now = new Date(at(9, 12, 45)).getTime();
+  const merged = mergeEvents(live);
+  const paired = pairSessions(merged, now).sessions;
+  assert.equal(paired.some((s) => s.on_event_id === 9001), false, "le chauffe-eau tourne encore à 12 h 45");
+  assert.equal(paired.find((s) => s.off_event_id === 9003)?.on_event_id, 9002, "l'arrêt de 12 h 24 revient au lave-vaisselle");
+  const named = [{ id: 7, centroid_power_w: 1670, avg_duration_min: 162 }];
+  assert.equal(runningSessions(merged, paired, named, now, 1900)[0]?.cluster_id, 7, "toujours compté en direct");
+  // Une fois l'arrêt arrivé, la session va bien jusqu'à 14 h 15.
+  const done = mergeEvents([...live, e(9004, 14, 15, -1096, 1452)]);
+  const s = pairSessions(done, new Date(at(9, 14, 30)).getTime()).sessions.find((x) => x.on_event_id === 9001);
+  assert.equal(s?.off_event_id, 9004);
+  // Historique complet (fenêtre écoulée) : le rabattement par magnitude reste possible.
+  assert.equal(pairSessions(mergeEvents(live)).sessions.find((x) => x.on_event_id === 9001)?.off_event_id, 9003);
+});

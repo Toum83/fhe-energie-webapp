@@ -134,8 +134,15 @@ export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
 /**
  * Apparie chaque ON avec le prochain OFF de magnitude la plus proche (pas le premier trouvé),
  * dans une fenêtre de 4 h. Retourne les sessions et le nombre d'événements non appariés.
+ *
+ * `nowMs` : instant du calcul. Un gros appareil (arrêt par retour au niveau) dont le retour
+ * n'est pas encore arrivé reste en marche tant que sa fenêtre de 4 h n'est pas écoulée, au lieu
+ * de se rabattre sur un OFF de magnitude voisine. Cas réel du 09/10/2026 : chauffe-eau démarré à
+ * 11 h 24, apparié vers 12 h 30 à l'arrêt (12 h 24) de la 2e chauffe du lave-vaisselle, de même
+ * puissance ; son compteur HA en direct s'est arrêté là alors qu'il a chauffé jusqu'à 14 h 15.
+ * Par défaut (Infinity), tout l'historique est considéré comme terminé.
  */
-export function pairSessions(merged: PowerEvent[]): { sessions: Session[]; unpaired: number } {
+export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions: Session[]; unpaired: number } {
   const used = new Set<number>();
   const sessions: Session[] = [];
   for (let i = 0; i < merged.length; i++) {
@@ -156,6 +163,8 @@ export function pairSessions(merged: PowerEvent[]): { sessions: Session[]; unpai
         }
       }
     }
+    // Retour au niveau pas encore arrivé, fenêtre encore ouverte : l'appareil tourne toujours.
+    if (!best && byLevel && nowMs - ts(on.ts) < PARAMS.pairWindowS * 1000) continue;
     if (!best) {
       for (let j = i + 1; j < merged.length; j++) {
         const off = merged[j];
@@ -449,9 +458,9 @@ export function runningSessions(
   return out;
 }
 
-export function runPipeline(events: PowerEvent[], existing: ExistingCluster[]): ClusteringResult {
+export function runPipeline(events: PowerEvent[], existing: ExistingCluster[], nowMs = Infinity): ClusteringResult {
   const merged = mergeEvents(events);
-  const { sessions, unpaired } = pairSessions(merged);
+  const { sessions, unpaired } = pairSessions(merged, nowMs);
   const clustered = clusterSessions(sessions, existing);
   const noise = clustered.sessions.filter((s) => s.cluster_key == null).length;
   return {
