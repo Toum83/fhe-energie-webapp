@@ -335,3 +335,28 @@ test("gros appareil en marche : pas de rabattement sur un OFF voisin tant que sa
   // Historique complet (fenêtre écoulée) : le rabattement par magnitude reste possible.
   assert.equal(pairSessions(mergeEvents(live)).sessions.find((x) => x.on_event_id === 9001)?.off_event_id, 9003);
 });
+
+test("creux d'une minute (relevé à la minute) : pas pris pour l'arrêt du chauffe-eau", () => {
+  // 10/10/2026 : chauffe-eau 11 h 30 (500 -> 2 330 W) ; creux 13 h 02 (1 376 -> 947) puis 13 h 03
+  // (947 -> 2 171, le chauffe-eau + une bouilloire) ; bouilloire coupée 13 h 05 ; vrai arrêt 14 h 02.
+  const e = (id: number, hh: number, mm: number, d: number, before: number): PowerEvent => ({
+    id, ts: at(10, hh, mm), delta_w: d, direction: d > 0 ? "on" : "off", production_power: 0, power_before: before, power_after: before + d,
+  });
+  const events = [
+    e(9101, 11, 30, 1830, 500),
+    e(9102, 13, 2, -429, 1376),
+    e(9103, 13, 3, 1224, 947),
+    e(9104, 13, 5, -627, 2214),
+    e(9105, 14, 2, -573, 1006),
+  ];
+  const merged = mergeEvents(events);
+  assert.equal(merged.some((x) => x.id === 9102), false, "le creux disparaît");
+  const kettle = merged.find((x) => x.id === 9103);
+  assert.equal(kettle?.delta_w, 795, "le ON suivant ne garde que ce qui dépasse le creux");
+  assert.equal(kettle?.power_before, 1376);
+  const heater = pairSessions(merged).sessions.find((s) => s.on_event_id === 9101);
+  assert.equal(heater?.off_event_id, 9105, "le chauffe-eau va jusqu'à 14 h 02");
+  // Une pointe brève (bouilloire seule) reste un appareil.
+  const spike = pairSessions(mergeEvents([e(9201, 8, 30, 1950, 300), e(9202, 8, 32, -1950, 2250)])).sessions;
+  assert.equal(spike.length, 1);
+});

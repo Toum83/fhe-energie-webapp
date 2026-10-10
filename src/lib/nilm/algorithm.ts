@@ -102,13 +102,51 @@ export const PARAMS = {
   /** Reprise d'un cluster non nommé existant si son centroïde est à <= 1. */
   reuseRadius: 1,
   timeZone: "Europe/Paris",
+  /**
+   * Creux d'un seul relevé : un OFF aussitôt suivi (<= 150 s) d'un ON qui reprend au moins 60 % de
+   * la baisse n'est pas un arrêt. Apparu avec le relevé à la minute (10/10/2026) : le chauffe-eau
+   * a plongé 1 min à 13 h 02 (1 376 -> 947 W) puis est remonté ; ce faux « retour au niveau »
+   * fermait sa session et arrêtait son compteur HA alors qu'il a chauffé jusqu'à 14 h.
+   */
+  dipWindowS: 150,
+  dipRecoverRatio: 0.6,
+  /** Plus petit échelon gardé (même seuil que l'automation HA de détection). */
+  minStepW: 200,
 } as const;
 
 const ts = (iso: string) => new Date(iso).getTime();
 
+/**
+ * Retire les creux d'un relevé (voir PARAMS.dipWindowS). Le ON qui suit perd l'amplitude du creux
+ * et repart du niveau d'avant celui-ci ; s'il ne reste qu'un résidu sous le seuil, il disparaît
+ * aussi. Une pointe brève (ON puis OFF), elle, est un vrai appareil court (bouilloire) : gardée.
+ */
+export function removeDips(sorted: PowerEvent[]): PowerEvent[] {
+  const out: PowerEvent[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const off = sorted[i];
+    const on = sorted[i + 1];
+    if (
+      off.direction === "off" &&
+      on?.direction === "on" &&
+      (ts(on.ts) - ts(off.ts)) / 1000 <= PARAMS.dipWindowS &&
+      on.delta_w >= PARAMS.dipRecoverRatio * -off.delta_w
+    ) {
+      const rest = on.delta_w + off.delta_w;
+      if (rest >= PARAMS.minStepW) {
+        out.push({ ...on, delta_w: rest, power_before: off.power_before ?? on.power_before });
+      }
+      i++; // le ON est consommé avec le creux
+      continue;
+    }
+    out.push(off);
+  }
+  return out;
+}
+
 /** Fusionne les événements de même sens très rapprochés (même échelon vu sur 2 relevés). */
 export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
-  const sorted = [...events].sort((a, b) => ts(a.ts) - ts(b.ts) || a.id - b.id);
+  const sorted = removeDips([...events].sort((a, b) => ts(a.ts) - ts(b.ts) || a.id - b.id));
   const out: PowerEvent[] = [];
   for (const e of sorted) {
     const last = out[out.length - 1];
