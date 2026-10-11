@@ -46,3 +46,18 @@ export async function fetchReport(startDate: string): Promise<WeeklyReport | nul
 export const isConfigured = () =>
   isMockMode() ||
   Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
+/** Gaz et heures de chauffe jour par jour (table gas_daily, supabase/gas_schema.sql). */
+export async function fetchGasDays(from: string, to: string): Promise<import("./gas").GasDayRow[]> {
+  if (isMockMode()) return [];
+  const supabase = getClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("gas_daily")
+    .select("day, gas_kwh, temp_ext, heating_hours")
+    .gte("day", from)
+    .lte("day", to)
+    .order("day");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as import("./gas").GasDayRow[];
+}

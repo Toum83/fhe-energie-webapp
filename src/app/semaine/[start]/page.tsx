@@ -6,7 +6,9 @@ import { EnergyChart } from "@/components/EnergyChart";
 import { Ring } from "@/components/Ring";
 import { StatTile } from "@/components/StatTile";
 import { eur, kwh, longDate, num, pct, shortWeekday, weekLabel } from "@/lib/format";
-import { fetchReport, fetchReports } from "@/lib/supabase";
+import { fetchGasDays, fetchReport, fetchReports } from "@/lib/supabase";
+import { GasCard } from "@/components/gas/GasCard";
+import { gasWeek } from "@/lib/gas";
 import { DeviceBreakdown } from "@/components/nilm/DeviceBreakdown";
 import { dbConfigured, fetchFirstEventDate, fetchWeekBreakdown, type DeviceWeek } from "@/lib/nilm/db";
 import { weekCoverage } from "@/lib/nilm/coverage";
@@ -36,6 +38,20 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
     }
   }
   const coverage = weekCoverage(start, firstEvent);
+
+  // Gaz (Gazpar) : facultatif, la page reste complète sans lui (table pas encore créée…).
+  const prevStart = new Date(`${start}T12:00:00Z`);
+  prevStart.setUTCDate(prevStart.getUTCDate() - 7);
+  const prevIso = prevStart.toISOString().slice(0, 10);
+  let gas: ReturnType<typeof gasWeek> | null = null;
+  let gasPrev: ReturnType<typeof gasWeek> | null = null;
+  try {
+    const rows = await fetchGasDays(prevIso, report.end_date);
+    gas = gasWeek(rows, start);
+    gasPrev = gasWeek(rows, prevIso);
+  } catch {
+    gas = null;
+  }
   const coveredConsumption = report.days
     .filter((d) => coverage.dates.includes(d.date))
     .reduce((a, d) => a + d.consumption_kwh, 0);
@@ -149,6 +165,8 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
       {devices.length > 0 ? (
         <DeviceBreakdown devices={devices} weekConsumptionKwh={coverage.partial ? coveredConsumption : report.consumption_kwh} coverage={coverage} index={7} />
       ) : null}
+
+      {gas && gas.knownDays > 0 ? <GasCard week={gas} previous={gasPrev && gasPrev.knownDays > 0 ? gasPrev : null} index={7} /> : null}
 
       {/* Détail par jour */}
       <section className="rise" style={{ "--i": 7 } as React.CSSProperties}>
