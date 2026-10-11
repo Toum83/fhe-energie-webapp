@@ -80,7 +80,10 @@ export function gasWeek(rows: GasDayRow[], weekStart: string): GasWeek {
     const r = byDay.get(date);
     const gas = n(r?.gas_kwh);
     const temp = n(r?.temp_ext);
-    const split = gas == null ? null : splitGas(gas);
+    const hours = n(r?.heating_hours);
+    // Le thermostat dit que la chaudière n'a pas chauffé : tout le gaz du jour est de la
+    // cuisson (un gros repas dépasse vite le socle moyen de 0,25 kWh).
+    const split = gas == null ? null : hours === 0 ? { cookingKwh: round(Math.max(gas, 0)), heatingKwh: 0 } : splitGas(gas);
     return {
       date,
       gasKwh: gas,
@@ -88,7 +91,7 @@ export function gasWeek(rows: GasDayRow[], weekStart: string): GasWeek {
       cookingKwh: split?.cookingKwh ?? null,
       tempC: temp,
       dju: temp == null ? null : dju(temp),
-      heatingHours: n(r?.heating_hours),
+      heatingHours: hours,
     };
   });
   const known = days.filter((d) => d.gasKwh != null);
@@ -110,8 +113,9 @@ export function gasWeek(rows: GasDayRow[], weekStart: string): GasWeek {
     heatingCostEur: round(heatingKwh * GAS.priceEurPerKwh),
     dju: round(weekDju, 1),
     heatingHours: hours == null ? null : round(hours, 1),
-    // Sous ~5 DJU (semaine douce), le ratio n'a pas de sens : quelques kWh divisés par presque rien.
-    kwhPerDju: weekDju >= 5 ? round(heatingKwh / weekDju) : null,
+    // Semaine douce ou sans vrai chauffage : le ratio n'a pas de sens (quelques kWh de repas
+    // classés « chauffage » divisés par presque rien).
+    kwhPerDju: weekDju >= 5 && heatingKwh >= 5 ? round(heatingKwh / weekDju) : null,
     kwhPerHeatingHour: hours != null && hours >= 1 ? round(gasWithHours / hours) : null,
   };
 }

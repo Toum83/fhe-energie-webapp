@@ -43,3 +43,20 @@ test("semaine douce ou sans heures : pas de ratio trompeur", () => {
   assert.equal(w.kwhPerDju, null);
   assert.equal(w.kwhPerHeatingHour, null);
 });
+
+test("jour sans chauffe (thermostat) : tout le gaz est de la cuisson", () => {
+  const w = gasWeek([{ day: "2026-10-05", gas_kwh: 1.4, temp_ext: 18, heating_hours: 0 }], "2026-10-05");
+  assert.equal(w.days[0].cookingKwh, 1.4);
+  assert.equal(w.days[0].heatingKwh, 0);
+});
+
+test("semaine d'intersaison : pas de kWh/DJU sur quelques kWh", () => {
+  const w = gasWeek(
+    [
+      { day: "2026-09-28", gas_kwh: 0.8, temp_ext: 15, heating_hours: null },
+      { day: "2026-10-01", gas_kwh: 1.4, temp_ext: 12, heating_hours: null },
+    ],
+    "2026-09-28",
+  );
+  assert.equal(w.kwhPerDju, null);
+});
