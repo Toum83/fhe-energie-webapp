@@ -54,7 +54,7 @@ export async function fetchGasDays(from: string, to: string): Promise<import("./
   if (!supabase) return [];
   const { data, error } = await supabase
     .from("gas_daily")
-    .select("day, gas_kwh, temp_ext, heating_hours")
+    .select("*")
     .gte("day", from)
     .lte("day", to)
     .order("day");

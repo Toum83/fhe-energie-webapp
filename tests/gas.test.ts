@@ -1,7 +1,7 @@
 // Lancer : node --test tests/gas.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { dju, gasWeek, splitGas, GAS } from "../src/lib/gas.ts";
+import { dju, gasWeek, seasonStart, splitGas, stoveEffect, GAS } from "../src/lib/gas.ts";
 
 test("cuisson = socle d'été, chauffage = le reste", () => {
   assert.deepEqual(splitGas(0.2), { cookingKwh: 0.2, heatingKwh: 0 }); // journée d'été : tout en cuisson
@@ -59,4 +59,23 @@ test("semaine d'intersaison : pas de kWh/DJU sur quelques kWh", () => {
     "2026-09-28",
   );
   assert.equal(w.kwhPerDju, null);
+});
+
+test("poêle : kWh/DJU avec contre sans, seulement avec assez de jours froids", () => {
+  const rows = [];
+  for (let i = 0; i < 6; i++) rows.push({ day: `2026-11-0${i + 1}`, gas_kwh: 30.25, temp_ext: 8, heating_hours: 5, stove_on: true }); // 30 kWh / 10 DJU
+  for (let i = 0; i < 5; i++) rows.push({ day: `2026-11-1${i}`, gas_kwh: 40.25, temp_ext: 8, heating_hours: 6, stove_on: false }); // 40 / 10
+  rows.push({ day: "2026-11-20", gas_kwh: 2, temp_ext: 16, heating_hours: 1, stove_on: false }); // trop doux : écarté
+  rows.push({ day: "2026-11-21", gas_kwh: 50, temp_ext: 5, heating_hours: 8, stove_on: null }); // pas d'info : écarté
+  const e = stoveEffect(rows);
+  assert.deepEqual(e.withStove, { days: 6, heatingKwh: 180, dju: 60, kwhPerDju: 3 });
+  assert.deepEqual(e.withoutStove, { days: 5, heatingKwh: 200, dju: 50, kwhPerDju: 4 });
+  assert.equal(e.savingPct, 25);
+  // Trop peu de jours sans poêle : pas de conclusion.
+  assert.equal(stoveEffect(rows.slice(0, 9)).savingPct, null);
+});
+
+test("saison de chauffe : à partir du 1er septembre", () => {
+  assert.equal(seasonStart("2026-10-12"), "2026-09-01");
+  assert.equal(seasonStart("2027-02-01"), "2026-09-01");
 });

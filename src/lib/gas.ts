@@ -22,6 +22,8 @@ export type GasDayRow = {
   gas_kwh: number | string | null;
   temp_ext: number | string | null;
   heating_hours: number | string | null;
+  /** Poêle à bois allumé ce jour-là (null : pas d'information). */
+  stove_on?: boolean | null;
 };
 
 export type GasDay = {
@@ -32,6 +34,7 @@ export type GasDay = {
   tempC: number | null;
   dju: number | null;
   heatingHours: number | null;
+  stoveOn: boolean | null;
 };
 
 export type GasWeek = {
@@ -92,6 +95,7 @@ export function gasWeek(rows: GasDayRow[], weekStart: string): GasWeek {
       tempC: temp,
       dju: temp == null ? null : dju(temp),
       heatingHours: hours,
+      stoveOn: r?.stove_on ?? null,
     };
   });
   const known = days.filter((d) => d.gasKwh != null);
@@ -118,4 +122,61 @@ export function gasWeek(rows: GasDayRow[], weekStart: string): GasWeek {
     kwhPerDju: weekDju >= 5 && heatingKwh >= 5 ? round(heatingKwh / weekDju) : null,
     kwhPerHeatingHour: hours != null && hours >= 1 ? round(gasWithHours / hours) : null,
   };
+}
+
+export const STOVE = {
+  /** Jours trop doux exclus : quelques kWh divisés par presque rien faussent le ratio. */
+  minDayDju: 3,
+  /** Il faut assez de jours de chaque côté pour que la comparaison ait un sens. */
+  minDaysPerGroup: 5,
+};
+
+export type StoveGroup = { days: number; heatingKwh: number; dju: number; kwhPerDju: number };
+export type StoveEffect = {
+  withStove: StoveGroup | null;
+  withoutStove: StoveGroup | null;
+  /** Gaz de chauffage économisé par le poêle, en % (positif = le poêle fait économiser). null si pas assez de jours. */
+  savingPct: number | null;
+};
+
+/**
+ * Effet du poêle sur la chaudière, sur toute la saison : kWh de chauffage par DJU les jours
+ * avec poêle contre les jours sans. Le ratio par DJU neutralise la météo (un jour doux consomme
+ * moins, avec ou sans poêle). Jours sans gaz connu, sans température ou trop doux : écartés.
+ */
+export function stoveEffect(rows: GasDayRow[]): StoveEffect {
+  const groups: Record<"on" | "off", { days: number; heating: number; dju: number }> = {
+    on: { days: 0, heating: 0, dju: 0 },
+    off: { days: 0, heating: 0, dju: 0 },
+  };
+  for (const r of rows) {
+    const gas = n(r.gas_kwh);
+    const temp = n(r.temp_ext);
+    if (gas == null || temp == null || r.stove_on == null) continue;
+    const d = dju(temp);
+    if (d < STOVE.minDayDju) continue;
+    const hours = n(r.heating_hours);
+    const heating = hours === 0 ? 0 : splitGas(gas).heatingKwh;
+    const g = groups[r.stove_on ? "on" : "off"];
+    g.days += 1;
+    g.heating += heating;
+    g.dju += d;
+  }
+  const finish = (g: { days: number; heating: number; dju: number }): StoveGroup | null =>
+    g.days >= STOVE.minDaysPerGroup && g.dju > 0
+      ? { days: g.days, heatingKwh: round(g.heating, 1), dju: round(g.dju, 1), kwhPerDju: round(g.heating / g.dju) }
+      : null;
+  const withStove = finish(groups.on);
+  const withoutStove = finish(groups.off);
+  const savingPct =
+    withStove && withoutStove && withoutStove.kwhPerDju > 0
+      ? Math.round((1 - withStove.kwhPerDju / withoutStove.kwhPerDju) * 100)
+      : null;
+  return { withStove, withoutStove, savingPct };
+}
+
+/** Début de la saison de chauffe en cours (1er septembre), pour l'analyse du poêle. */
+export function seasonStart(iso: string): string {
+  const [y, m] = iso.split("-").map(Number);
+  return `${m >= 9 ? y : y - 1}-09-01`;
 }

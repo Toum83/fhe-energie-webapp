@@ -1,12 +1,12 @@
 import { Delta } from "@/components/Delta";
 import { eur, num, shortWeekday } from "@/lib/format";
-import { GAS, type GasWeek } from "@/lib/gas";
+import { GAS, STOVE, type GasWeek, type StoveEffect } from "@/lib/gas";
 
 const dayLabel = (iso: string) =>
   new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${iso}T12:00:00Z`));
 
 /** Chauffage au gaz de la semaine : chaudière (chauffage seul) et plaques de cuisson. */
-export function GasCard({ week, previous, index }: { week: GasWeek; previous: GasWeek | null; index: number }) {
+export function GasCard({ week, previous, stove, index }: { week: GasWeek; previous: GasWeek | null; stove: StoveEffect; index: number }) {
   const max = Math.max(...week.days.map((d) => d.gasKwh ?? 0), 0.001);
   return (
     <section className="card rise p-5" style={{ "--i": index } as React.CSSProperties}>
@@ -45,8 +45,11 @@ export function GasCard({ week, previous, index }: { week: GasWeek; previous: Ga
 
       <ul className="mt-5 flex flex-col gap-2">
         {week.days.map((d) => (
-          <li key={d.date} className="grid grid-cols-[2.75rem_1fr_auto] items-center gap-3">
-            <span className="text-xs font-medium capitalize text-muted">{shortWeekday(d.date)}</span>
+          <li key={d.date} className="grid grid-cols-[3.75rem_1fr_auto] items-center gap-3">
+            <span className="text-xs font-medium capitalize text-muted">
+              {shortWeekday(d.date)}
+              {d.stoveOn ? <span aria-label="poêle allumé" title="Poêle allumé"> 🔥</span> : null}
+            </span>
             <div className="h-2 overflow-hidden rounded-full bg-surface-2">
               {d.gasKwh != null ? (
                 <div className="h-full rounded-full bg-conso" style={{ width: `${Math.max((d.gasKwh / max) * 100, d.gasKwh > 0 ? 2 : 0)}%` }} />
@@ -59,6 +62,8 @@ export function GasCard({ week, previous, index }: { week: GasWeek; previous: Ga
           </li>
         ))}
       </ul>
+
+      <StovePanel stove={stove} />
 
       <p className="mt-4 text-xs leading-relaxed text-faint">
         Gazpar ne donne qu&apos;un total par jour : la cuisson est estimée à {num(GAS.cookingKwhPerDay, 2)} kWh/jour (conso
@@ -75,6 +80,43 @@ function Stat({ value, label, hint }: { value: string; label: string; hint?: Rea
       <div className="num text-base">{value}</div>
       <div className="text-[10px] font-medium uppercase tracking-wide text-muted">{label}</div>
       {hint ? <div className="mt-1 flex justify-center">{hint}</div> : null}
+    </div>
+  );
+}
+
+/** Effet du poêle sur la saison : kWh de chauffage par DJU, jours avec contre jours sans. */
+function StovePanel({ stove }: { stove: StoveEffect }) {
+  const { withStove, withoutStove, savingPct } = stove;
+  return (
+    <div className="mt-5 rounded-2xl bg-surface-2 px-4 py-3">
+      <p className="text-sm font-semibold tracking-tight">🔥 Effet du poêle (depuis septembre)</p>
+      {savingPct != null && withStove && withoutStove ? (
+        <>
+          <p className="mt-1 text-sm">
+            {savingPct > 0 ? (
+              <>
+                La chaudière consomme <strong>{savingPct} % de moins</strong> les jours de poêle, à météo égale.
+              </>
+            ) : savingPct < 0 ? (
+              <>
+                Pas d&apos;économie visible : la chaudière consomme <strong>{-savingPct} % de plus</strong> les jours de poêle.
+              </>
+            ) : (
+              <>Aucune différence visible les jours de poêle.</>
+            )}
+          </p>
+          <p className="mt-1 text-xs tabular-nums text-muted">
+            avec poêle {num(withStove.kwhPerDju, 2)} kWh/DJU ({withStove.days} j) · sans {num(withoutStove.kwhPerDju, 2)} kWh/DJU (
+            {withoutStove.days} j)
+          </p>
+        </>
+      ) : (
+        <p className="mt-1 text-xs leading-relaxed text-muted">
+          Pas encore assez de jours froids pour comparer : il faut au moins {STOVE.minDaysPerGroup} jours avec poêle et{" "}
+          {STOVE.minDaysPerGroup} jours sans (à plus de {STOVE.minDayDju} degrés-jours). Jusqu&apos;ici :{" "}
+          {withStove?.days ?? "moins de " + STOVE.minDaysPerGroup} avec, {withoutStove?.days ?? "moins de " + STOVE.minDaysPerGroup} sans.
+        </p>
+      )}
     </div>
   );
 }
