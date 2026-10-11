@@ -360,3 +360,30 @@ test("creux d'une minute (relevé à la minute) : pas pris pour l'arrêt du chau
   const spike = pairSessions(mergeEvents([e(9201, 8, 30, 1950, 300), e(9202, 8, 32, -1950, 2250)])).sessions;
   assert.equal(spike.length, 1);
 });
+
+test("chauffe-eau programmé : compté dès le relevé suivant à son heure habituelle", async () => {
+  const { runningSessions, usualStartMinute, localMinute } = await import("../src/lib/nilm/algorithm.ts");
+  // Démarrages habituels 11 h 24 – 11 h 34 (heure de Paris).
+  const starts = [at(1, 11, 24), at(2, 11, 30), at(3, 11, 34), at(4, 11, 28), at(5, 11, 31)];
+  const usual = usualStartMinute(starts);
+  assert.equal(usual, 11 * 60 + 30);
+  assert.equal(usualStartMinute(starts.slice(0, 3)), null, "trop peu de sessions");
+  assert.equal(usualStartMinute([at(1, 8, 0), at(2, 11, 0), at(3, 14, 0), at(4, 17, 0), at(5, 20, 0)]), null, "irrégulier");
+  assert.equal(localMinute(at(6, 11, 30)), 690);
+
+  const on = (hh: number, mm: number): PowerEvent => ({
+    id: nextId++, ts: at(11, hh, mm), delta_w: 1830, direction: "on", production_power: 0, power_before: 250, power_after: 2080,
+  });
+  const named = [{ id: 7, centroid_power_w: 1670, avg_duration_min: 162, usual_start_min: usual }];
+  const run = (e: PowerEvent, minutesAfter: number) => {
+    const merged = mergeEvents([e]);
+    return runningSessions(merged, pairSessions(merged).sessions, named, new Date(e.ts).getTime() + minutesAfter * 60000, 2000);
+  };
+  // 11 h 30, 5 min après : déjà compté, rattrapage de 5 min seulement.
+  const early = run(on(11, 30), 5);
+  assert.equal(early[0]?.cluster_id, 7);
+  assert.equal(early[0]?.elapsed_min, 5);
+  // Même puissance à 19 h (four ?) : attend toujours les 30 min de confirmation.
+  assert.deepEqual(run(on(19, 0), 5), []);
+  assert.equal(run(on(19, 0), 31)[0]?.cluster_id, 7);
+});

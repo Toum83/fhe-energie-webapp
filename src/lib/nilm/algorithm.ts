@@ -306,6 +306,25 @@ function median(values: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+/** Minute du jour (0..1439), heure de Paris. */
+export function localMinute(iso: string): number {
+  const parts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: PARAMS.timeZone }).formatToParts(new Date(iso));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+  return (get("hour") % 24) * 60 + get("minute");
+}
+
+/**
+ * Heure de démarrage habituelle d'un appareil programmé (minute du jour), ou null s'il n'est pas
+ * régulier : au moins RUNNING.usualMinSessions sessions et un écart médian <= usualMaxSpreadMin.
+ * Ne sert qu'au compteur en direct, jamais à reconnaître l'appareil.
+ */
+export function usualStartMinute(startIsos: string[]): number | null {
+  if (startIsos.length < RUNNING.usualMinSessions) return null;
+  const mins = startIsos.map(localMinute);
+  const m = median(mins);
+  return median(mins.map((x) => Math.abs(x - m))) <= RUNNING.usualMaxSpreadMin ? m : null;
+}
+
 function localHour(iso: string): number {
   const parts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone: PARAMS.timeZone }).formatToParts(new Date(iso));
   return Number(parts.find((p) => p.type === "hour")?.value ?? 0) % 24;
@@ -441,6 +460,18 @@ export const RUNNING = {
   minShare: 0.5,
   /** Plafond de la puissance attribuée : un autre appareil peut s'ajouter pendant la chauffe. */
   maxShare: 1.1,
+  /**
+   * Appareil programmé (chauffe-eau qui démarre tous les jours vers 11 h 30) : un démarrage de sa
+   * puissance à ± usualWindowMin de son heure habituelle est compté dès le relevé suivant, sans les
+   * 30 min de confirmation. Celles-ci étaient sinon créditées d'un bloc dans l'heure suivante
+   * (11/10/2026 : 1,07 kWh sur 12 h dont ~0,7 appartenait à 11 h, avec de la « surestimation »).
+   * Seule exception à la règle « jamais l'heure » : elle ne touche que ce compteur, pas la
+   * reconnaissance des appareils. Risque accepté : un four allumé pile à cette heure-là serait
+   * compté comme chauffe-eau jusqu'à son arrêt.
+   */
+  usualWindowMin: 30,
+  usualMinSessions: 5,
+  usualMaxSpreadMin: 30,
 };
 
 /**
@@ -463,7 +494,7 @@ export type RunningSession = { on_event_id: number; cluster_id: number; watts: n
 export function runningSessions(
   merged: PowerEvent[],
   sessions: Session[],
-  named: { id: number; centroid_power_w: number; avg_duration_min: number }[],
+  named: { id: number; centroid_power_w: number; avg_duration_min: number; usual_start_min?: number | null }[],
   nowMs: number,
   housePowerW: number | null = null,
 ): RunningSession[] {
@@ -474,13 +505,16 @@ export function runningSessions(
     const on = merged[i];
     if (on.direction !== "on" || on.delta_w < PARAMS.levelPairMinW || paired.has(on.id)) continue;
     const elapsedMin = (nowMs - ts(on.ts)) / 60000;
-    if (elapsedMin < RUNNING.minElapsedMin || elapsedMin * 60 > PARAMS.pairWindowS) continue;
+    if (elapsedMin < 0 || elapsedMin * 60 > PARAMS.pairWindowS) continue;
     const nominal = revealedPowerW(merged, i, merged.length) ?? on.delta_w;
     const matches = long.filter(
       (c) => Math.abs(Math.log(nominal) - Math.log(Math.max(c.centroid_power_w, 1))) / PARAMS.powerLogScale <= PARAMS.assignRadius,
     );
     if (matches.length !== 1) continue;
     const c = matches[0];
+    const atUsualTime =
+      c.usual_start_min != null && Math.abs(localMinute(on.ts) - c.usual_start_min) <= RUNNING.usualWindowMin;
+    if (elapsedMin < RUNNING.minElapsedMin && !atUsualTime) continue;
     let watts = nominal;
     if (housePowerW != null && Number.isFinite(housePowerW) && on.power_before != null) {
       const measured = housePowerW - on.power_before;

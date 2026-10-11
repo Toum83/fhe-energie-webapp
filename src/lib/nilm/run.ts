@@ -1,5 +1,5 @@
 import "server-only";
-import { mergeEvents, pairSessions, runningSessions, runPipeline, type RunningSession } from "./algorithm";
+import { mergeEvents, pairSessions, runningSessions, runPipeline, usualStartMinute, type RunningSession } from "./algorithm";
 import { fetchClusters, fetchEvents, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
@@ -16,7 +16,12 @@ export async function runClustering(housePowerW: number | null = null) {
   const merged = mergeEvents(events);
   const named = existing
     .filter((c) => c.label && c.label.trim())
-    .map((c) => ({ id: c.id, centroid_power_w: Number(c.centroid_power_w), avg_duration_min: Number(c.avg_duration_min) }));
+    .map((c) => ({
+      id: c.id,
+      centroid_power_w: Number(c.centroid_power_w),
+      avg_duration_min: Number(c.avg_duration_min),
+      usual_start_min: usualStartMinute(result.sessions.filter((s) => s.cluster_key === `id:${c.id}`).map((s) => s.start_ts)),
+    }));
   const running: RunningSession[] = runningSessions(merged, pairSessions(merged, now).sessions, named, now, housePowerW);
   return { stats: result.stats, saved, running };
 }
