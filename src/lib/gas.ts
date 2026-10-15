@@ -24,6 +24,8 @@ export type GasDayRow = {
   heating_hours: number | string | null;
   /** Poêle à bois allumé ce jour-là (null : pas d'information). */
   stove_on?: boolean | null;
+  /** Fond permanent de la maison ce jour-là (W), voir lib/nilm/baseload.ts. */
+  base_w?: number | string | null;
 };
 
 export type GasDay = {

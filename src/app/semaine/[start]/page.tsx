@@ -10,6 +10,7 @@ import { fetchGasDays, fetchReport, fetchReports } from "@/lib/supabase";
 import { GasCard } from "@/components/gas/GasCard";
 import { gasWeek, seasonStart, stoveEffect } from "@/lib/gas";
 import { DeviceBreakdown } from "@/components/nilm/DeviceBreakdown";
+import { baseLoad } from "@/lib/nilm/baseload";
 import { dbConfigured, fetchFirstEventDate, fetchWeekBreakdown, type DeviceWeek } from "@/lib/nilm/db";
 import { weekCoverage } from "@/lib/nilm/coverage";
 
@@ -46,10 +47,12 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
   let gas: ReturnType<typeof gasWeek> | null = null;
   let gasPrev: ReturnType<typeof gasWeek> | null = null;
   let stove: ReturnType<typeof stoveEffect> | null = null;
+  let gasRows: Awaited<ReturnType<typeof fetchGasDays>> = [];
   try {
     // Toute la saison jusqu'à cette semaine : la semaine, la précédente et l'effet du poêle.
     const from = seasonStart(start) < prevIso ? seasonStart(start) : prevIso;
     const rows = await fetchGasDays(from, report.end_date);
+    gasRows = rows;
     gas = gasWeek(rows, start);
     gasPrev = gasWeek(rows, prevIso);
     stove = stoveEffect(rows);
@@ -167,7 +170,7 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
       </section>
 
       {devices.length > 0 ? (
-        <DeviceBreakdown devices={devices} weekConsumptionKwh={coverage.partial ? coveredConsumption : report.consumption_kwh} coverage={coverage} index={7} />
+        <DeviceBreakdown devices={devices} weekConsumptionKwh={coverage.partial ? coveredConsumption : report.consumption_kwh} coverage={coverage} base={baseLoad(gasRows, coverage.dates)} index={7} />
       ) : null}
 
       {gas && stove && gas.knownDays > 0 ? (

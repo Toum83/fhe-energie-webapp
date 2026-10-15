@@ -387,3 +387,33 @@ test("chauffe-eau programmé : compté dès le relevé suivant à son heure habi
   assert.deepEqual(run(on(19, 0), 5), []);
   assert.equal(run(on(19, 0), 31)[0]?.cluster_id, 7);
 });
+
+test("relevé à la minute : fenêtre de fusion de 150 s, 330 s avant le 10 octobre", () => {
+  const iso = (s: string) => new Date(s).toISOString();
+  // Avant : deux ON à 4 min d'écart = un seul échelon vu sur 2 relevés de 5 min.
+  const before = mergeEvents([ev(iso("2026-10-09T08:00:00Z"), 1000), ev(iso("2026-10-09T08:04:00Z"), 800)]);
+  assert.equal(before.length, 1);
+  // Après : 4 min d'écart = deux appareils ; 2 min = encore le même échelon.
+  const after = mergeEvents([
+    ev(iso("2026-10-12T08:00:00Z"), 1000),
+    ev(iso("2026-10-12T08:04:00Z"), 800),
+    ev(iso("2026-10-12T08:06:00Z"), 300),
+  ]);
+  assert.deepEqual(after.map((e) => e.delta_w), [1000, 1100]);
+});
+
+test("fond permanent : moyenne des jours mesurés, étendue aux jours demandés", async () => {
+  const { baseLoad } = await import("../src/lib/nilm/baseload.ts");
+  const rows = [
+    { day: "2026-10-12", base_w: "228.0" },
+    { day: "2026-10-13", base_w: 232 },
+    { day: "2026-10-14", base_w: null },
+    { day: "2026-10-20", base_w: 500 }, // hors semaine
+  ];
+  const b = baseLoad(rows, ["2026-10-12", "2026-10-13", "2026-10-14"]);
+  assert.ok(b);
+  assert.equal(b.watts, 230);
+  assert.equal(b.measuredDays, 2);
+  assert.ok(Math.abs(b.kwh - (230 * 24 * 3) / 1000) < 1e-9);
+  assert.equal(baseLoad(rows, ["2026-10-01"]), null);
+});

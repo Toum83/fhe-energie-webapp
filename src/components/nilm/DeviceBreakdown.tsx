@@ -1,3 +1,4 @@
+import type { BaseLoad } from "@/lib/nilm/baseload";
 import type { Coverage } from "@/lib/nilm/coverage";
 import type { DeviceWeek } from "@/lib/nilm/db";
 import { groupDevices } from "@/lib/nilm/group";
@@ -12,18 +13,23 @@ export function DeviceBreakdown({
   devices,
   weekConsumptionKwh,
   coverage,
+  base,
   index,
 }: {
   devices: DeviceWeek[];
   /** Consommation des seuls jours couverts par la détection (le bilan complet si la semaine l'est). */
   weekConsumptionKwh: number;
   coverage: Coverage;
+  /** Fond permanent sur les mêmes jours (null : pas encore mesuré). */
+  base: BaseLoad | null;
   index: number;
 }) {
   const groups = groupDevices(devices);
   const named = groups.reduce((a, d) => a + d.energy_kwh, 0);
-  const rest = Math.max(weekConsumptionKwh - named, 0);
-  const max = Math.max(...groups.map((d) => d.energy_kwh), rest, 0.001);
+  const baseKwh = base ? Math.min(base.kwh, Math.max(weekConsumptionKwh - named, 0)) : 0;
+  const rest = Math.max(weekConsumptionKwh - named - baseKwh, 0);
+  const max = Math.max(...groups.map((d) => d.energy_kwh), baseKwh, rest, 0.001);
+  const baseShare = weekConsumptionKwh ? Math.round((100 * baseKwh) / weekConsumptionKwh) : null;
 
   return (
     <section className="card rise p-5" style={{ "--i": index } as React.CSSProperties}>
@@ -70,6 +76,27 @@ export function DeviceBreakdown({
             </li>
           );
         })}
+        {base ? (
+          <li>
+            <div className="mb-1.5 flex items-baseline justify-between gap-3">
+              <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                <span aria-hidden>🔋</span>
+                <span className="truncate">Fond permanent</span>
+              </span>
+              <span className="num shrink-0 text-base">{nf.format(baseKwh)} kWh</span>
+            </div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-surface-2">
+              <div
+                className="bar-x h-full rounded-full bg-conso/60"
+                style={{ "--i": groups.length, width: `${(baseKwh / max) * 100}%` } as React.CSSProperties}
+              />
+            </div>
+            <p className="mt-1.5 text-xs tabular-nums text-muted">
+              ~{Math.round(base.watts)} W jour et nuit (veilles, frigo, box, VMC…)
+              {baseShare != null ? ` · ${baseShare} % de la conso ${coverage.partial ? "des jours couverts" : "de la semaine"}` : ""}
+            </p>
+          </li>
+        ) : null}
         <li>
           <div className="mb-1.5 flex items-baseline justify-between gap-3">
             <span className="text-sm font-medium text-muted">Reste (non attribué)</span>
@@ -82,7 +109,8 @@ export function DeviceBreakdown({
       </ul>
       <p className="mt-4 text-xs leading-relaxed text-faint">
         Estimations basses : seules les utilisations reconnues par leur signature sont comptées. Les appareils non nommés,
-        les petits appareils et la pompe à chaleur du thermodynamique restent dans « Reste ». Nommer un appareil dans
+        les petits appareils et la pompe à chaleur du thermodynamique restent dans « Reste ». Le fond permanent est la
+        puissance qui ne descend jamais, même la nuit. Nommer un appareil dans
         Appareils complète aussi les semaines passées ; un nom « Famille · détail » (ex. « Cuisine · Bouilloire & four »)
         additionne les cartes de la même famille.
       </p>

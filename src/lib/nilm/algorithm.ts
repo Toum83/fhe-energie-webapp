@@ -62,8 +62,15 @@ export type ClusteringResult = {
 };
 
 export const PARAMS = {
-  /** Deux événements de même sens à moins de ça sont un seul échelon étalé sur 2 relevés. */
+  /**
+   * Deux événements de même sens à moins de ça sont un seul échelon étalé sur 2 relevés.
+   * 330 s quand HA relevait toutes les 5 min, 150 s depuis le relevé à la minute
+   * (voir minutePollingSince) : deux appareils allumés à 3 min d'écart restent distincts.
+   */
   mergeWindowS: 330,
+  mergeWindowMinuteS: 150,
+  /** Passage de fhe_solar au relevé à la minute. */
+  minutePollingSince: "2026-10-10T09:14:00Z",
   /** Au-delà, un ON sans OFF correspondant est abandonné. */
   pairWindowS: 4 * 3600,
   /** Tolérance de magnitude entre un ON et son OFF : max(35 % du ON, 250 W). */
@@ -144,6 +151,11 @@ export function removeDips(sorted: PowerEvent[]): PowerEvent[] {
   return out;
 }
 
+/** Fenêtre de fusion selon le rythme de relevé en vigueur à cet instant. */
+export function mergeWindowAt(iso: string): number {
+  return ts(iso) >= ts(PARAMS.minutePollingSince) ? PARAMS.mergeWindowMinuteS : PARAMS.mergeWindowS;
+}
+
 /** Fusionne les événements de même sens très rapprochés (même échelon vu sur 2 relevés). */
 export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
   const sorted = removeDips([...events].sort((a, b) => ts(a.ts) - ts(b.ts) || a.id - b.id));
@@ -153,7 +165,7 @@ export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
     if (
       last &&
       last.direction === e.direction &&
-      (ts(e.ts) - ts(last.ts)) / 1000 <= PARAMS.mergeWindowS
+      (ts(e.ts) - ts(last.ts)) / 1000 <= mergeWindowAt(last.ts)
     ) {
       // On garde l'id et l'instant du premier relevé (début de l'échelon), l'amplitude cumulée et le niveau final.
       out[out.length - 1] = {
