@@ -417,3 +417,12 @@ test("fond permanent : moyenne des jours mesurés, étendue aux jours demandés"
   assert.ok(Math.abs(b.kwh - (230 * 24 * 3) / 1000) < 1e-9);
   assert.equal(baseLoad(rows, ["2026-10-01"]), null);
 });
+
+test("heure habituelle : un changement de programme est repris sur les dernières sessions", async () => {
+  const { usualStartMinute } = await import("../src/lib/nilm/algorithm.ts");
+  const day = (d: number, hh: number, mm: number) => new Date(Date.UTC(2026, 9, d, hh - 2, mm)).toISOString();
+  const old = Array.from({ length: 20 }, (_, i) => day(i + 1, 11, 30));
+  const moved = Array.from({ length: 5 }, (_, i) => day(i + 21, 14, 0));
+  assert.equal(usualStartMinute(old), 11 * 60 + 30);
+  assert.equal(usualStartMinute([...moved, ...old]), 14 * 60);
+});

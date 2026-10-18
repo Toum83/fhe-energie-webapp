@@ -328,11 +328,14 @@ export function localMinute(iso: string): number {
 /**
  * Heure de démarrage habituelle d'un appareil programmé (minute du jour), ou null s'il n'est pas
  * régulier : au moins RUNNING.usualMinSessions sessions et un écart médian <= usualMaxSpreadMin.
+ * Seules les RUNNING.usualRecentSessions dernières sessions comptent : quand le programme change
+ * (chauffe-eau passé de 11 h 30 à 14 h le 18/10/2026), la nouvelle heure est reprise en ~5 jours.
  * Ne sert qu'au compteur en direct, jamais à reconnaître l'appareil.
  */
 export function usualStartMinute(startIsos: string[]): number | null {
   if (startIsos.length < RUNNING.usualMinSessions) return null;
-  const mins = startIsos.map(localMinute);
+  const recent = [...startIsos].sort().slice(-RUNNING.usualRecentSessions);
+  const mins = recent.map(localMinute);
   const m = median(mins);
   return median(mins.map((x) => Math.abs(x - m))) <= RUNNING.usualMaxSpreadMin ? m : null;
 }
@@ -484,6 +487,7 @@ export const RUNNING = {
   usualWindowMin: 30,
   usualMinSessions: 5,
   usualMaxSpreadMin: 30,
+  usualRecentSessions: 7,
 };
 
 /**
