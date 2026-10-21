@@ -426,3 +426,16 @@ test("heure habituelle : un changement de programme est repris sur les dernière
   assert.equal(usualStartMinute(old), 11 * 60 + 30);
   assert.equal(usualStartMinute([...moved, ...old]), 14 * 60);
 });
+
+test("impulsions de thermostat : chaque ON est fermé par le OFF qui le suit, pas par un OFF lointain", () => {
+  const iso = (s: string) => new Date(s).toISOString();
+  const events: PowerEvent[] = [];
+  for (let k = 0; k < 6; k++) {
+    const t = Date.parse("2026-10-21T03:58:00Z") + k * 5 * 60000;
+    events.push(ev(new Date(t).toISOString(), 330), ev(new Date(t + 60000).toISOString(), -330));
+  }
+  events.push(ev(iso("2026-10-21T06:46:00Z"), -320)); // OFF d'un autre appareil, plus tard
+  const { sessions } = pairSessions(mergeEvents(events));
+  assert.equal(sessions.length, 6);
+  assert.ok(sessions.every((s) => s.duration_min === 1));
+});

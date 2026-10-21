@@ -76,6 +76,8 @@ export const PARAMS = {
   /** Tolérance de magnitude entre un ON et son OFF : max(35 % du ON, 250 W). */
   pairRelTol: 0.35,
   pairAbsTolW: 250,
+  /** Un ON immédiatement suivi d'un OFF de même amplitude est apparié à ce OFF (voir pairSessions). */
+  pairNextOff: true,
   /**
    * Gros appareils : à partir de ce ON, l'arrêt est reconnu au retour au niveau d'avant le
    * démarrage (± max(25 %, 150 W)), même s'il se fait en plusieurs paliers. Cas typique : un
@@ -215,6 +217,22 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
     }
     // Retour au niveau pas encore arrivé, fenêtre encore ouverte : l'appareil tourne toujours.
     if (!best && byLevel && nowMs - ts(on.ts) < PARAMS.pairWindowS * 1000) continue;
+    // L'événement suivant est un OFF de même amplitude : rien d'autre n'a bougé, c'est le sien.
+    // Cas réel des matins du 19 au 21/10/2026 : thermostat du sèche-serviettes en impulsions
+    // d'1 min (~350 W) toutes les 5 min ; « la plus proche en magnitude » allait chercher un OFF
+    // des heures plus tard et fabriquait des sessions de 3 h.
+    const next = merged[i + 1];
+    if (
+      !best &&
+      PARAMS.pairNextOff &&
+      next &&
+      next.direction === "off" &&
+      !used.has(i + 1) &&
+      (ts(next.ts) - ts(on.ts)) / 1000 <= PARAMS.pairWindowS &&
+      Math.abs(-next.delta_w - on.delta_w) <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW)
+    ) {
+      best = { err: Math.abs(-next.delta_w - on.delta_w), j: i + 1 };
+    }
     if (!best) {
       for (let j = i + 1; j < merged.length; j++) {
         const off = merged[j];
