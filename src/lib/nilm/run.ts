@@ -1,12 +1,16 @@
 import "server-only";
-import { mergeEvents, pairSessions, runningSessions, runPipeline, usualStartMinute, type RunningSession } from "./algorithm";
-import { fetchClusters, fetchEvents, saveClustering } from "./db";
+import { deviceContexts, mergeEvents, pairSessions, runningSessions, runPipeline, usualStartMinute, type RunningSession } from "./algorithm";
+import { fetchClusters, fetchDeviceStates, fetchEvents, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
 export async function runClustering(housePowerW: number | null = null) {
-  const [events, existing] = await Promise.all([fetchEvents(), fetchClusters()]);
+  const [events, existing, states] = await Promise.all([
+    fetchEvents(),
+    fetchClusters(),
+    fetchDeviceStates().catch(() => []), // fonction SQL pas encore installée : pas de contexte
+  ]);
   const now = Date.now();
-  const result = runPipeline(events, existing, now);
+  const result = runPipeline(events, existing, now, deviceContexts(states, now));
   const saved = await saveClustering({
     clusters: result.clusters,
     sessions: result.sessions,

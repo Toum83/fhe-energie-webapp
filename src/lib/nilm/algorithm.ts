@@ -369,7 +369,55 @@ function localHour(iso: string): number {
  *  2. les autres passent dans DBSCAN, qui ne crée/met à jour que des clusters NON nommés.
  * Les clusters non nommés gardent leur id d'un run à l'autre (appariement au plus proche centroïde).
  */
-export function clusterSessions(sessions: Session[], existing: ExistingCluster[]): Omit<ClusteringResult, "stats"> {
+/** Changement d'état d'un appareil suivi par HA (ex. vidéoprojecteur via Android TV Remote). */
+export type DeviceState = { device: string; ts: string; state: string };
+
+/**
+ * Contexte d'un appareil dont HA connaît l'état : ses sessions ne peuvent rejoindre les cartes
+ * dont le nom commence par `labelPrefix` que si l'appareil était allumé pendant au moins
+ * `minOnShare` de la session. Cas réel : vidéoprojecteur (~140 W + ~400-650 W en lecture) et
+ * chauffe-eau thermodynamique (~450 W) donnent des sessions de même puissance ; l'état du
+ * projecteur dans HA les départage. Avant `since` (début du suivi), rien ne change.
+ */
+export type DeviceContext = { labelPrefix: string; since: string; on: [number, number][]; minOnShare: number };
+
+export const CONTEXTS = [{ device: "video_proj", labelPrefix: "Vidéo proj", minOnShare: 0.5 }];
+
+/** Périodes « allumé » à partir des changements d'état (un état encore « on » court jusqu'à nowMs). */
+export function deviceContexts(states: DeviceState[], nowMs = Date.now()): DeviceContext[] {
+  return CONTEXTS.flatMap((cfg) => {
+    const ss = states.filter((s) => s.device === cfg.device).sort((a, b) => ts(a.ts) - ts(b.ts));
+    if (ss.length === 0) return [];
+    const on: [number, number][] = [];
+    let start: number | null = null;
+    for (const s of ss) {
+      if (s.state === "on" && start == null) start = ts(s.ts);
+      else if (s.state !== "on" && start != null) {
+        on.push([start, ts(s.ts)]);
+        start = null;
+      }
+    }
+    if (start != null) on.push([start, nowMs]);
+    return [{ labelPrefix: cfg.labelPrefix, since: ss[0].ts, on, minOnShare: cfg.minOnShare }];
+  });
+}
+
+/** Part (0..1) de la session pendant laquelle l'appareil était allumé. */
+export function onShare(s: Session, ctx: DeviceContext): number {
+  const a = ts(s.start_ts);
+  const b = Math.max(ts(s.end_ts), a + 60000);
+  const covered = ctx.on.reduce((acc, [x, y]) => acc + Math.max(0, Math.min(b, y) - Math.max(a, x)), 0);
+  return covered / (b - a);
+}
+
+/** Vrai si la session ne peut pas rejoindre ce cluster nommé (appareil éteint pendant la session). */
+function forbidden(s: Session, c: ExistingCluster, contexts: DeviceContext[]): boolean {
+  return contexts.some(
+    (ctx) => (c.label ?? "").startsWith(ctx.labelPrefix) && s.start_ts >= ctx.since && onShare(s, ctx) < ctx.minOnShare,
+  );
+}
+
+export function clusterSessions(sessions: Session[], existing: ExistingCluster[], contexts: DeviceContext[] = []): Omit<ClusteringResult, "stats"> {
   const named = existing.filter((c) => c.label && c.label.trim() !== "");
   const unnamed = existing.filter((c) => !c.label || c.label.trim() === "");
 
@@ -384,6 +432,7 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
     const f = feature(s.power_w, s.duration_min);
     let best: { d: number; c: ExistingCluster } | null = null;
     for (const c of named) {
+      if (forbidden(s, c, contexts)) continue;
       const d = dist(f, centroidOf(c));
       if (d <= PARAMS.assignRadius && (!best || d < best.d)) best = { d, c };
     }
@@ -564,10 +613,15 @@ export function runningSessions(
   return out;
 }
 
-export function runPipeline(events: PowerEvent[], existing: ExistingCluster[], nowMs = Infinity): ClusteringResult {
+export function runPipeline(
+  events: PowerEvent[],
+  existing: ExistingCluster[],
+  nowMs = Infinity,
+  contexts: DeviceContext[] = [],
+): ClusteringResult {
   const merged = mergeEvents(events);
   const { sessions, unpaired } = pairSessions(merged, nowMs);
-  const clustered = clusterSessions(sessions, existing);
+  const clustered = clusterSessions(sessions, existing, contexts);
   const noise = clustered.sessions.filter((s) => s.cluster_key == null).length;
   return {
     sessions: clustered.sessions,

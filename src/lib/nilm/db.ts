@@ -48,6 +48,8 @@ export type StoredCluster = ExistingCluster & {
 
 export const fetchEvents = () => rpc<import("./algorithm").PowerEvent[]>("nilm_get_events", {});
 export const fetchClusters = () => rpc<StoredCluster[]>("nilm_get_clusters", {});
+/** États des appareils suivis par HA (vidéoprojecteur…), envoyés via insert_power_event. */
+export const fetchDeviceStates = async () => (await rpc<import("./algorithm").DeviceState[] | null>("nilm_get_device_states", {})) ?? [];
 export const saveClustering = (payload: unknown) => rpc<{ clusters: number; sessions: number }>("nilm_save_clustering", { payload });
 export const setLabel = (clusterId: number, label: string, icon: string | null) =>
   rpc<null>("nilm_set_label", { cluster_id: clusterId, new_label: label, new_icon: icon });

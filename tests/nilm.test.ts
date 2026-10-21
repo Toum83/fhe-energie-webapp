@@ -439,3 +439,27 @@ test("impulsions de thermostat : chaque ON est fermé par le OFF qui le suit, pa
   assert.equal(sessions.length, 6);
   assert.ok(sessions.every((s) => s.duration_min === 1));
 });
+
+test("vidéoprojecteur suivi par HA : une session de même puissance hors de ses heures ne rejoint pas sa carte", async () => {
+  const { clusterSessions, deviceContexts } = await import("../src/lib/nilm/algorithm.ts");
+  const proj = { id: 15, label: "Vidéo proj · mode 2", centroid_power_w: 460, centroid_log_duration: Math.log(60) };
+  const session = (start: string, end: string) => ({
+    on_event_id: nextId++, off_event_id: nextId++, start_ts: start, end_ts: end,
+    power_w: 460, duration_min: (Date.parse(end) - Date.parse(start)) / 60000, pct_solar: 0,
+  });
+  const during = session("2026-10-21T19:40:00Z", "2026-10-21T20:40:00Z");
+  const off = session("2026-10-21T13:28:00Z", "2026-10-21T14:28:00Z");
+  const before = session("2026-10-17T13:28:00Z", "2026-10-17T14:28:00Z"); // avant le suivi : inchangé
+  const ctx = deviceContexts(
+    [
+      { device: "video_proj", ts: "2026-10-19T06:27:00Z", state: "off" },
+      { device: "video_proj", ts: "2026-10-21T19:30:00Z", state: "on" },
+      { device: "video_proj", ts: "2026-10-21T21:00:00Z", state: "off" },
+    ],
+    Date.parse("2026-10-22T00:00:00Z"),
+  );
+  const out = clusterSessions([during, off, before], [proj], ctx).sessions;
+  assert.equal(out[0].cluster_key, "id:15");
+  assert.notEqual(out[1].cluster_key, "id:15");
+  assert.equal(out[2].cluster_key, "id:15");
+});
