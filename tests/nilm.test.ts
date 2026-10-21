@@ -80,13 +80,13 @@ test("pipeline : trouve deux appareils récurrents sans utiliser l'heure du jour
   [[1, 3], [2, 14], [3, 22], [4, 11], [5, 6]].forEach(([d, h], i) =>
     events.push(...cycle(d, h, 0, 2000 + i * 40, 45 + i * 2, h > 9 && h < 18 ? 3000 : 0)),
   );
-  // Lave-linge ~1200 W / ~2 h.
-  [[1, 19], [3, 10], [5, 21]].forEach(([d, h], i) => events.push(...cycle(d, h, 0, 1200 + i * 30, 120 + i * 5)));
+  // Lave-linge ~1200 W / ~2 h (4 fois : une carte se forme à partir de 4 sessions).
+  [[1, 19], [3, 10], [5, 21], [6, 15]].forEach(([d, h], i) => events.push(...cycle(d, h, 0, 1200 + i * 30, 120 + i * 5)));
   const result = runPipeline(events, []);
-  assert.equal(result.stats.sessions, 8);
+  assert.equal(result.stats.sessions, 9);
   assert.equal(result.clusters.length, 2);
   const counts = result.clusters.map((c) => c.occurrences).sort();
-  assert.deepEqual(counts, [3, 5]);
+  assert.deepEqual(counts, [4, 5]);
   const big = result.clusters.find((c) => c.occurrences === 5)!;
   assert.ok(big.centroid_power_w > 1900 && big.centroid_power_w < 2300);
   assert.ok(big.avg_pct_solar > 0 && big.avg_pct_solar < 1); // jour/nuit mélangés

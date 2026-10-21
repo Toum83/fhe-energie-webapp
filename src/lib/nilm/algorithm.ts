@@ -106,8 +106,14 @@ export const PARAMS = {
   durationLogScale: 0.7, // facteur ~2 sur la durée
   /** Un cluster nommé absorbe une session si sa distance normalisée <= 1. */
   assignRadius: 1,
-  dbscanEps: 1,
-  dbscanMinPts: 3,
+  /**
+   * Regroupement des sessions non reconnues. 1 / 3 convenait aux relevés de 5 min ; à la minute,
+   * les sessions sont 2 fois plus nombreuses (impulsions de thermostat, four) et s'enchaînaient
+   * de proche en proche en une seule carte de 205 à 4 272 W (229 sessions, 21/10/2026).
+   * 0,5 / 4 donne 13 cartes compactes sur le même historique, sans toucher aux cartes nommées.
+   */
+  dbscanEps: 0.5,
+  dbscanMinPts: 4,
   /** Reprise d'un cluster non nommé existant si son centroïde est à <= 1. */
   reuseRadius: 1,
   timeZone: "Europe/Paris",
