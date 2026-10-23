@@ -208,6 +208,9 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
   // tout le cycle de thermostat se décalait d'un cran (sessions chevauchées, 1,4 kWh compté en trop).
   const remaining = new Map<number, number>();
   const left = (j: number) => remaining.get(j) ?? -merged[j].delta_w;
+  // device_sessions.off_event_id est unique en base : une 2e session fermée par le même OFF prend
+  // son propre ON comme référence de fin (end_ts reste la vraie heure de fin).
+  const offTaken = new Set<number>();
   const sessions: Session[] = [];
   for (let i = 0; i < merged.length; i++) {
     const on = merged[i];
@@ -276,7 +279,7 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
     const coverage = (e: PowerEvent) => Math.min(Math.max(e.production_power ?? 0, 0) / Math.max(powerW, 1), 1);
     sessions.push({
       on_event_id: on.id,
-      off_event_id: off.id,
+      off_event_id: offTaken.has(off.id) ? on.id : (offTaken.add(off.id), off.id),
       start_ts: on.ts,
       end_ts: off.ts,
       // Arrêt par paliers : seul le démarrage reflète la puissance nominale.

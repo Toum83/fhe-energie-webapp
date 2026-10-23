@@ -511,3 +511,15 @@ test("chauffe mesurée par la prise du lave-vaisselle : elle ne peut plus aller 
   assert.equal(out[0].cluster_key, "id:70");
   assert.equal(out[1].cluster_key, "id:9");
 });
+
+test("OFF partagé : les off_event_id restent uniques (contrainte de la base)", () => {
+  const iso = (s: string) => new Date(s).toISOString();
+  const e = (t: string, before: number, after: number): PowerEvent => ({ ...ev(iso(t), after - before), power_before: before, power_after: after });
+  const { sessions } = pairSessions(mergeEvents([
+    e("2026-10-23T09:52:30Z", 199, 1988),
+    e("2026-10-23T09:55:30Z", 1939, 3795),
+    e("2026-10-23T09:56:30Z", 3795, 338),
+  ]));
+  assert.equal(sessions.length, 2);
+  assert.equal(new Set(sessions.map((s) => s.off_event_id)).size, 2);
+});
