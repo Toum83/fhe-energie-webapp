@@ -421,8 +421,9 @@ test("fond permanent : moyenne des jours mesurés, étendue aux jours demandés"
 test("heure habituelle : un changement de programme est repris sur les dernières sessions", async () => {
   const { usualStartMinute } = await import("../src/lib/nilm/algorithm.ts");
   const day = (d: number, hh: number, mm: number) => new Date(Date.UTC(2026, 9, d, hh - 2, mm)).toISOString();
-  const old = Array.from({ length: 20 }, (_, i) => day(i + 1, 11, 30));
-  const moved = Array.from({ length: 5 }, (_, i) => day(i + 21, 14, 0));
+  // Avant le passage à l'heure d'hiver du 25/10 (UTC+2 partout).
+  const old = Array.from({ length: 15 }, (_, i) => day(i + 1, 11, 30));
+  const moved = Array.from({ length: 5 }, (_, i) => day(i + 16, 14, 0));
   assert.equal(usualStartMinute(old), 11 * 60 + 30);
   assert.equal(usualStartMinute([...moved, ...old]), 14 * 60);
 });
@@ -462,4 +463,28 @@ test("vidéoprojecteur suivi par HA : une session de même puissance hors de ses
   assert.equal(out[0].cluster_key, "id:15");
   assert.notEqual(out[1].cluster_key, "id:15");
   assert.equal(out[2].cluster_key, "id:15");
+});
+
+test("deux résistances coupées ensemble : une seule baisse ferme les deux sessions", () => {
+  const iso = (s: string) => new Date(s).toISOString();
+  const e = (t: string, before: number, after: number): PowerEvent => ({ ...ev(iso(t), after - before), power_before: before, power_after: after });
+  const events = [
+    e("2026-10-23T09:52:30Z", 199, 1988),
+    e("2026-10-23T09:55:30Z", 1939, 3795),
+    e("2026-10-23T09:56:30Z", 3795, 338),
+    e("2026-10-23T10:08:30Z", 279, 2277),
+    e("2026-10-23T10:18:40Z", 2135, 236),
+  ];
+  const { sessions } = pairSessions(mergeEvents(events));
+  assert.deepEqual(
+    sessions.map((s) => [s.start_ts.slice(11, 16), s.end_ts.slice(11, 16)]),
+    [["09:52", "09:56"], ["09:55", "09:56"], ["10:08", "10:18"]],
+  );
+});
+
+test("heure habituelle : désactivée tant que les dernières chauffes ne suivent pas la médiane", async () => {
+  const { usualStartMinute } = await import("../src/lib/nilm/algorithm.ts");
+  const day = (d: number, hh: number, mm: number) => new Date(Date.UTC(2026, 9, d, hh - 2, mm)).toISOString();
+  const starts = [13, 14, 15, 16, 17, 18].map((d) => day(d, 11, 30)).concat([day(19, 14, 45), day(20, 14, 44)]);
+  assert.equal(usualStartMinute(starts), null);
 });

@@ -202,6 +202,12 @@ export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
  */
 export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions: Session[]; unpaired: number } {
   const used = new Set<number>();
+  // Amplitude encore disponible d'un OFF déjà attribué : deux appareils coupés ensemble ne font
+  // qu'une baisse. Cas réel du 23/10/2026 : les deux résistances du four (1 789 W à 11 h 52,
+  // 1 856 W à 11 h 55) coupent ensemble (−3 450 W) ; la 2e allait chercher la baisse suivante et
+  // tout le cycle de thermostat se décalait d'un cran (sessions chevauchées, 1,4 kWh compté en trop).
+  const remaining = new Map<number, number>();
+  const left = (j: number) => remaining.get(j) ?? -merged[j].delta_w;
   const sessions: Session[] = [];
   for (let i = 0; i < merged.length; i++) {
     const on = merged[i];
@@ -215,6 +221,8 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
         const off = merged[j];
         if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
         if (off.direction !== "off" || used.has(j)) continue;
+        // OFF partagé : il doit lui rester de quoi couper cet appareil aussi.
+        if (remaining.has(j) && left(j) < (1 - PARAMS.levelRelTol) * on.delta_w) continue;
         if (off.power_after != null && off.power_after <= ceiling) {
           best = { err: 0, j };
           break;
@@ -235,16 +243,16 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
       next.direction === "off" &&
       !used.has(i + 1) &&
       (ts(next.ts) - ts(on.ts)) / 1000 <= PARAMS.pairWindowS &&
-      Math.abs(-next.delta_w - on.delta_w) <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW)
+      Math.abs(left(i + 1) - on.delta_w) <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW)
     ) {
-      best = { err: Math.abs(-next.delta_w - on.delta_w), j: i + 1 };
+      best = { err: Math.abs(left(i + 1) - on.delta_w), j: i + 1 };
     }
     if (!best) {
       for (let j = i + 1; j < merged.length; j++) {
         const off = merged[j];
         if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
         if (off.direction !== "off" || used.has(j)) continue;
-        const err = Math.abs(-off.delta_w - on.delta_w);
+        const err = Math.abs(left(j) - on.delta_w);
         if (err <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW) && (!best || err < best.err)) {
           best = { err, j };
         }
@@ -252,9 +260,13 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
     }
     if (!best) continue;
     const off = merged[best.j];
-    used.add(best.j);
+    const offMag = left(best.j);
+    // Par niveau, l'appareil ne consomme que son propre saut ; sinon le OFF est épuisé.
+    const rest = byLevel && best.err === 0 ? offMag - on.delta_w : 0;
+    if (rest >= PARAMS.minStepW) remaining.set(best.j, rest);
+    else used.add(best.j);
     const durationMin = (ts(off.ts) - ts(on.ts)) / 60000;
-    let powerW = byLevel && best.err === 0 ? on.delta_w : (on.delta_w + -off.delta_w) / 2;
+    let powerW = byLevel && best.err === 0 ? on.delta_w : (on.delta_w + offMag) / 2;
     if (byLevel && best.err === 0 && durationMin >= PARAMS.revealMinMinutes) {
       const revealed = revealedPowerW(merged, i, best.j);
       if (revealed != null) powerW = revealed;
@@ -361,7 +373,11 @@ export function usualStartMinute(startIsos: string[]): number | null {
   const recent = [...startIsos].sort().slice(-RUNNING.usualRecentSessions);
   const mins = recent.map(localMinute);
   const m = median(mins);
-  return median(mins.map((x) => Math.abs(x - m))) <= RUNNING.usualMaxSpreadMin ? m : null;
+  if (median(mins.map((x) => Math.abs(x - m))) > RUNNING.usualMaxSpreadMin) return null;
+  // Pendant un changement de programme, la médiane peut encore pointer l'ancienne heure : les
+  // 3 dernières chauffes doivent toutes y être. Cas réel du 23/10/2026 : programme passé de 11 h 30
+  // à 14 h 45 ; le four lancé à 11 h 52 a été compté en direct comme chauffe-eau.
+  return mins.slice(-3).every((x) => Math.abs(x - m) <= RUNNING.usualMaxSpreadMin) ? m : null;
 }
 
 function localHour(iso: string): number {
