@@ -488,3 +488,26 @@ test("heure habituelle : désactivée tant que les dernières chauffes ne suiven
   const starts = [13, 14, 15, 16, 17, 18].map((d) => day(d, 11, 30)).concat([day(19, 14, 45), day(20, 14, 44)]);
   assert.equal(usualStartMinute(starts), null);
 });
+
+test("chauffe mesurée par la prise du lave-vaisselle : elle ne peut plus aller dans la carte du four", async () => {
+  const { clusterSessions, deviceContexts } = await import("../src/lib/nilm/algorithm.ts");
+  const four = { id: 9, label: "Cuisine · Four préchauffe", centroid_power_w: 1900, centroid_log_duration: Math.log(15) };
+  const lv = { id: 70, label: "Lave-vaisselle · chauffe", centroid_power_w: 2150, centroid_log_duration: Math.log(12) };
+  const session = (start: string, end: string, w: number) => ({
+    on_event_id: nextId++, off_event_id: nextId++, start_ts: start, end_ts: end,
+    power_w: w, duration_min: (Date.parse(end) - Date.parse(start)) / 60000, pct_solar: 0,
+  });
+  const chauffe = session("2026-10-23T12:07:30Z", "2026-10-23T12:22:30Z", 2100);
+  const fourSeul = session("2026-10-23T17:00:00Z", "2026-10-23T17:15:00Z", 1900);
+  const ctx = deviceContexts(
+    [
+      { device: "lave_vaisselle", ts: "2026-10-23T12:07:35Z", state: "on" },
+      { device: "lave_vaisselle", ts: "2026-10-23T12:22:33Z", state: "off" },
+    ],
+    Date.parse("2026-10-24T00:00:00Z"),
+  );
+  assert.equal(clusterSessions([chauffe, fourSeul], [four], ctx).sessions[0].cluster_key, null);
+  const out = clusterSessions([chauffe, fourSeul], [four, lv], ctx).sessions;
+  assert.equal(out[0].cluster_key, "id:70");
+  assert.equal(out[1].cluster_key, "id:9");
+});

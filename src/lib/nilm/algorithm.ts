@@ -401,9 +401,26 @@ export type DeviceState = { device: string; ts: string; state: string };
  * chauffe-eau thermodynamique (~450 W) donnent des sessions de même puissance ; l'état du
  * projecteur dans HA les départage. Avant `since` (début du suivi), rien ne change.
  */
-export type DeviceContext = { labelPrefix: string; since: string; on: [number, number][]; minOnShare: number };
+export type DeviceContext = {
+  labelPrefix: string;
+  since: string;
+  on: [number, number][];
+  minOnShare: number;
+  /**
+   * Appareil mesuré par une prise (ex. chauffes du lave-vaisselle) : une session d'au moins
+   * `minPowerW` qui tombe dans ses périodes de chauffe ne peut aller QUE dans une carte de ce nom.
+   * Sans carte de ce nom, elle reste orpheline et formera une carte à nommer.
+   */
+  exclusiveMinPowerW?: number;
+};
 
-export const CONTEXTS = [{ device: "video_proj", labelPrefix: "Vidéo proj", minOnShare: 0.5 }];
+export const CONTEXTS: { device: string; labelPrefix: string; minOnShare: number; exclusiveMinPowerW?: number }[] = [
+  { device: "video_proj", labelPrefix: "Vidéo proj", minOnShare: 0.5 },
+  // Prises Koogeek : HA envoie « on » au-delà de 1 000 W (chauffe de l'eau), « off » sous 500 W.
+  // Cas réel du 23/10/2026 : 4 chauffes de 2,2 kW (8 à 18 min) que le NILM rangeait dans le four.
+  { device: "lave_vaisselle", labelPrefix: "Lave-vaisselle", minOnShare: 0.6, exclusiveMinPowerW: 800 },
+  { device: "lave_linge", labelPrefix: "Lave-linge", minOnShare: 0.6, exclusiveMinPowerW: 800 },
+];
 
 /** Périodes « allumé » à partir des changements d'état (un état encore « on » court jusqu'à nowMs). */
 export function deviceContexts(states: DeviceState[], nowMs = Date.now()): DeviceContext[] {
@@ -420,7 +437,9 @@ export function deviceContexts(states: DeviceState[], nowMs = Date.now()): Devic
       }
     }
     if (start != null) on.push([start, nowMs]);
-    return [{ labelPrefix: cfg.labelPrefix, since: ss[0].ts, on, minOnShare: cfg.minOnShare }];
+    return [
+      { labelPrefix: cfg.labelPrefix, since: ss[0].ts, on, minOnShare: cfg.minOnShare, exclusiveMinPowerW: cfg.exclusiveMinPowerW },
+    ];
   });
 }
 
@@ -434,9 +453,16 @@ export function onShare(s: Session, ctx: DeviceContext): number {
 
 /** Vrai si la session ne peut pas rejoindre ce cluster nommé (appareil éteint pendant la session). */
 function forbidden(s: Session, c: ExistingCluster, contexts: DeviceContext[]): boolean {
-  return contexts.some(
-    (ctx) => (c.label ?? "").startsWith(ctx.labelPrefix) && s.start_ts >= ctx.since && onShare(s, ctx) < ctx.minOnShare,
-  );
+  const label = c.label ?? "";
+  return contexts.some((ctx) => {
+    if (s.end_ts < ctx.since) return false; // session finie avant le début du suivi
+    const share = onShare(s, ctx);
+    const own = label.startsWith(ctx.labelPrefix);
+    // Carte de l'appareil, mais l'appareil était éteint pendant la session.
+    if (own && share < ctx.minOnShare) return true;
+    // Session expliquée par un appareil mesuré : aucune autre carte ne peut la prendre.
+    return !own && ctx.exclusiveMinPowerW != null && s.power_w >= ctx.exclusiveMinPowerW && share >= ctx.minOnShare;
+  });
 }
 
 export function clusterSessions(sessions: Session[], existing: ExistingCluster[], contexts: DeviceContext[] = []): Omit<ClusteringResult, "stats"> {
