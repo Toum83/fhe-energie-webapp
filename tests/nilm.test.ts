@@ -534,3 +534,20 @@ test("compteur en direct : une chauffe mesurée par la prise du lave-linge n'est
   const ctx = deviceContexts([{ device: "lave_linge", ts: "2026-10-24T15:01:30Z", state: "on" }], now);
   assert.equal(runningSessions([on], [], named, now, null, ctx).length, 0);
 });
+
+test("prises : kWh mesurés sommés sur les jours demandés, NILM remplacé seulement si toute la période est couverte", async () => {
+  const { measuredDevices } = await import("../src/lib/nilm/measured.ts");
+  const rows = [
+    { day: "2026-10-23", measured: { lave_vaisselle: 1.64 } },
+    { day: "2026-10-24", measured: { lave_vaisselle: "1.8", coin_cinema: 0.9 } },
+    { day: "2026-10-25", measured: null },
+  ];
+  const m = measuredDevices(rows, ["2026-10-23", "2026-10-24"]);
+  assert.deepEqual(m.map((d) => [d.key, d.kwh, d.since, d.complete]), [
+    ["lave_vaisselle", 3.44, "2026-10-23", true],
+    ["coin_cinema", 0.9, "2026-10-24", false],
+  ]);
+  assert.ok(m[0].replaces.test("Lave-vaisselle · chauffe"));
+  assert.ok(m[1].replaces.test("Vidéo proj · mode 1"));
+  assert.deepEqual(measuredDevices(rows, ["2026-10-25"]), []);
+});

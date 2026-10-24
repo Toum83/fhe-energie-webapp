@@ -2,6 +2,7 @@ import type { BaseLoad } from "@/lib/nilm/baseload";
 import type { Coverage } from "@/lib/nilm/coverage";
 import type { DeviceWeek } from "@/lib/nilm/db";
 import { groupDevices } from "@/lib/nilm/group";
+import { withoutMeasured, type MeasuredDevice } from "@/lib/nilm/measured";
 
 const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
 
@@ -14,6 +15,7 @@ export function DeviceBreakdown({
   weekConsumptionKwh,
   coverage,
   base,
+  measured = [],
   index,
 }: {
   devices: DeviceWeek[];
@@ -22,13 +24,17 @@ export function DeviceBreakdown({
   coverage: Coverage;
   /** Fond permanent sur les mêmes jours (null : pas encore mesuré). */
   base: BaseLoad | null;
+  /** Appareils mesurés par une prise : remplacent l'estimation NILM de la même famille. */
+  measured?: MeasuredDevice[];
   index: number;
 }) {
-  const groups = groupDevices(devices);
-  const named = groups.reduce((a, d) => a + d.energy_kwh, 0);
+  // Une prise qui couvre toute la période remplace les cartes NILM de l'appareil.
+  const groups = withoutMeasured(groupDevices(devices), measured);
+  const plugKwh = measured.reduce((a, m) => a + m.kwh, 0);
+  const named = groups.reduce((a, d) => a + d.energy_kwh, 0) + plugKwh;
   const baseKwh = base ? Math.min(base.kwh, Math.max(weekConsumptionKwh - named, 0)) : 0;
   const rest = Math.max(weekConsumptionKwh - named - baseKwh, 0);
-  const max = Math.max(...groups.map((d) => d.energy_kwh), baseKwh, rest, 0.001);
+  const max = Math.max(...groups.map((d) => d.energy_kwh), ...measured.map((m) => m.kwh), baseKwh, rest, 0.001);
   const baseShare = weekConsumptionKwh ? Math.round((100 * baseKwh) / weekConsumptionKwh) : null;
 
   return (
@@ -76,6 +82,31 @@ export function DeviceBreakdown({
             </li>
           );
         })}
+        {measured.map((m, i) => {
+          const share = weekConsumptionKwh ? Math.round((100 * m.kwh) / weekConsumptionKwh) : null;
+          return (
+            <li key={m.key}>
+              <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                  <span aria-hidden>{m.icon}</span>
+                  <span className="truncate">{m.label}</span>
+                  <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-normal text-muted">mesuré</span>
+                </span>
+                <span className="num shrink-0 text-base">{nf.format(m.kwh)} kWh</span>
+              </div>
+              <div className="h-2.5 overflow-hidden rounded-full bg-surface-2">
+                <div
+                  className="bar-x h-full rounded-full bg-conso"
+                  style={{ "--i": groups.length + i, width: `${Math.max((m.kwh / max) * 100, m.kwh > 0 ? 3 : 0)}%` } as React.CSSProperties}
+                />
+              </div>
+              <p className="mt-1.5 text-xs tabular-nums text-muted">
+                prise connectée{m.complete ? "" : `, depuis le ${dayLabel(m.since)}`}
+                {share != null ? ` · ${share} % de la conso ${coverage.partial ? "des jours couverts" : "de la semaine"}` : ""}
+              </p>
+            </li>
+          );
+        })}
         {base ? (
           <li>
             <div className="mb-1.5 flex items-baseline justify-between gap-3">
@@ -88,7 +119,7 @@ export function DeviceBreakdown({
             <div className="h-2.5 overflow-hidden rounded-full bg-surface-2">
               <div
                 className="bar-x h-full rounded-full bg-conso/60"
-                style={{ "--i": groups.length, width: `${(baseKwh / max) * 100}%` } as React.CSSProperties}
+                style={{ "--i": groups.length + measured.length, width: `${(baseKwh / max) * 100}%` } as React.CSSProperties}
               />
             </div>
             <p className="mt-1.5 text-xs tabular-nums text-muted">
@@ -110,7 +141,8 @@ export function DeviceBreakdown({
       <p className="mt-4 text-xs leading-relaxed text-faint">
         Estimations basses : seules les utilisations reconnues par leur signature sont comptées. Les appareils non nommés,
         les petits appareils et la pompe à chaleur du thermodynamique restent dans « Reste ». Le fond permanent est la
-        puissance qui ne descend jamais, même la nuit. Nommer un appareil dans
+        puissance qui ne descend jamais, même la nuit. Les lignes « mesuré » viennent d'une prise connectée et
+        remplacent l'estimation de l'appareil. Nommer un appareil dans
         Appareils complète aussi les semaines passées ; un nom « Famille · détail » (ex. « Cuisine · Bouilloire & four »)
         additionne les cartes de la même famille.
       </p>

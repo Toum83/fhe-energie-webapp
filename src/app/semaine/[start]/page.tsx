@@ -11,6 +11,11 @@ import { GasCard } from "@/components/gas/GasCard";
 import { gasWeek, seasonStart, stoveEffect } from "@/lib/gas";
 import { DeviceBreakdown } from "@/components/nilm/DeviceBreakdown";
 import { baseLoad } from "@/lib/nilm/baseload";
+import { measuredDevices, withoutMeasured } from "@/lib/nilm/measured";
+import { groupDevices } from "@/lib/nilm/group";
+import { weekFacts } from "@/lib/summary/facts";
+import { weekSummary } from "@/lib/summary/generate";
+import { SummaryCard } from "@/components/SummaryCard";
 import { dbConfigured, fetchFirstEventDate, fetchWeekBreakdown, type DeviceWeek } from "@/lib/nilm/db";
 import { weekCoverage } from "@/lib/nilm/coverage";
 
@@ -67,6 +72,21 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
   const i = all.findIndex((r) => r.start_date === start);
   const older = i >= 0 ? all[i + 1] : undefined;
   const newer = i > 0 ? all[i - 1] : undefined;
+
+  const base = baseLoad(gasRows, coverage.dates);
+  const measured = measuredDevices(gasRows, coverage.dates);
+  // Synthèse rédigée par Claude : facultative, écrite une fois par semaine terminée.
+  const summary = await weekSummary(start, report.end_date, () =>
+    weekFacts({
+      report,
+      previous: older,
+      devices: withoutMeasured(groupDevices(devices), measured),
+      measured,
+      baseW: base?.watts ?? null,
+      gas,
+      gasPrevious: gasPrev,
+    }),
+  );
 
   const chartData = report.days.map((d) => ({
     label: shortWeekday(d.date),
@@ -164,13 +184,15 @@ export default async function WeekPage({ params }: PageProps<"/semaine/[start]">
         </div>
       </section>
 
+      {summary ? <SummaryCard text={summary} index={6} /> : null}
+
       <section className="card rise p-5" style={{ "--i": 6 } as React.CSSProperties}>
         <h2 className="mb-4 text-base font-semibold tracking-tight">Jour par jour</h2>
         <EnergyChart data={chartData} height={220} />
       </section>
 
       {devices.length > 0 ? (
-        <DeviceBreakdown devices={devices} weekConsumptionKwh={coverage.partial ? coveredConsumption : report.consumption_kwh} coverage={coverage} base={baseLoad(gasRows, coverage.dates)} index={7} />
+        <DeviceBreakdown devices={devices} weekConsumptionKwh={coverage.partial ? coveredConsumption : report.consumption_kwh} coverage={coverage} base={base} measured={measured} index={7} />
       ) : null}
 
       {gas && stove && gas.knownDays > 0 ? (

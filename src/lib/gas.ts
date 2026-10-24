@@ -32,6 +32,8 @@ export type GasDayRow = {
   stove_on?: boolean | null;
   /** Fond permanent de la maison ce jour-là (W), voir lib/nilm/baseload.ts. */
   base_w?: number | string | null;
+  /** kWh du jour mesurés par prise, par appareil (voir lib/nilm/measured.ts). */
+  measured?: Record<string, number | string | null> | null;
 };
 
 export type GasDay = {
