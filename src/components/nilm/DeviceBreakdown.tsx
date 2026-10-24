@@ -141,8 +141,8 @@ export function DeviceBreakdown({
       <p className="mt-4 text-xs leading-relaxed text-faint">
         Estimations basses : seules les utilisations reconnues par leur signature sont comptées. Les appareils non nommés,
         les petits appareils et la pompe à chaleur du thermodynamique restent dans « Reste ». Le fond permanent est la
-        puissance qui ne descend jamais, même la nuit. Les lignes « mesuré » viennent d'une prise connectée et
-        remplacent l'estimation de l'appareil. Nommer un appareil dans
+        puissance qui ne descend jamais, même la nuit. Les lignes « mesuré » viennent d’une prise connectée et
+        remplacent l’estimation de l’appareil. Nommer un appareil dans
         Appareils complète aussi les semaines passées ; un nom « Famille · détail » (ex. « Cuisine · Bouilloire & four »)
         additionne les cartes de la même famille.
       </p>
