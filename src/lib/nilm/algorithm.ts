@@ -78,6 +78,8 @@ export const PARAMS = {
   pairAbsTolW: 250,
   /** Un ON immédiatement suivi d'un OFF de même amplitude est apparié à ce OFF (voir pairSessions). */
   pairNextOff: true,
+  /** Part de la plus courte au-delà de laquelle deux sessions d'une même carte sont un doublon. */
+  selfOverlapMax: 0.5,
   /**
    * Gros appareils : à partir de ce ON, l'arrêt est reconnu au retour au niveau d'avant le
    * démarrage (± max(25 %, 150 W)), même s'il se fait en plusieurs paliers. Cas typique : un
@@ -130,6 +132,14 @@ export const PARAMS = {
 } as const;
 
 const ts = (iso: string) => new Date(iso).getTime();
+
+/** Recouvrement de deux sessions, en part de la plus courte (0 si l'une est encore ouverte). */
+function overlapShare(a: Session, b: Session): number {
+  if (!a.end_ts || !b.end_ts) return 0;
+  const o = Math.min(ts(a.end_ts), ts(b.end_ts)) - Math.max(ts(a.start_ts), ts(b.start_ts));
+  const shorter = Math.min(ts(a.end_ts) - ts(a.start_ts), ts(b.end_ts) - ts(b.start_ts));
+  return o > 0 && shorter > 0 ? o / shorter : 0;
+}
 
 /**
  * Retire les creux d'un relevé (voir PARAMS.dipWindowS). Le ON qui suit perd l'amplitude du creux
@@ -490,6 +500,27 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
     if (best) assignment[i] = `id:${best.c.id}`;
     else orphans.push(i);
   });
+
+  // Un appareil ne tourne pas deux fois en même temps : deux sessions d'une même carte qui se
+  // recouvrent largement viennent d'un appariement croisé (cas réel : thermodynamique compté deux
+  // fois le 21/10/2026, 15h20→17h08 et 15h44→18h00). On garde la plus proche de la signature.
+  for (const c of named) {
+    const key = `id:${c.id}`;
+    const target = centroidOf(c);
+    const idxs = sessions.flatMap((_, i) => (assignment[i] === key ? [i] : [])).sort((a, b) => ts(sessions[a].start_ts) - ts(sessions[b].start_ts));
+    let kept = -1;
+    for (const i of idxs) {
+      if (kept >= 0 && overlapShare(sessions[kept], sessions[i]) > PARAMS.selfOverlapMax) {
+        const dk = dist(feature(sessions[kept].power_w, sessions[kept].duration_min), target);
+        const di = dist(feature(sessions[i].power_w, sessions[i].duration_min), target);
+        const drop = di < dk ? kept : i;
+        assignment[drop] = null;
+        orphans.push(drop);
+        if (drop === kept) kept = i;
+      } else kept = i;
+    }
+  }
+  orphans.sort((a, b) => a - b);
 
   const labels = dbscan(
     orphans.map((i) => feature(sessions[i].power_w, sessions[i].duration_min)),

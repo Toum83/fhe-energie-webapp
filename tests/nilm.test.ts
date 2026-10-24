@@ -551,3 +551,19 @@ test("prises : kWh mesurés sommés sur les jours demandés, NILM remplacé seul
   assert.ok(m[1].replaces.test("Vidéo proj · mode 1"));
   assert.deepEqual(measuredDevices(rows, ["2026-10-25"]), []);
 });
+
+test("doublon : deux sessions d'une même carte qui se recouvrent, on garde la plus proche de la signature", () => {
+  const iso = (s: string) => new Date(s).toISOString();
+  // Thermodynamique du 21/10/2026 : deux appariements croisés pour un seul appareil.
+  const events: PowerEvent[] = [
+    ev(iso("2026-10-21T13:20:00Z"), 717),
+    ev(iso("2026-10-21T13:44:00Z"), 512),
+    ev(iso("2026-10-21T15:08:00Z"), -717),
+    ev(iso("2026-10-21T16:00:00Z"), -512),
+  ];
+  const thermo = { id: 57, label: "Chauffe-eau Thermodynamique", centroid_power_w: 599, centroid_log_duration: Math.log(160) };
+  const { sessions } = runPipeline(events, [thermo]);
+  const named = sessions.filter((s) => s.cluster_key === "id:57");
+  assert.equal(named.length, 1);
+  assert.equal(Math.round(named[0].power_w), 512);
+});
