@@ -79,3 +79,13 @@ test("saison de chauffe : à partir du 1er septembre", () => {
   assert.equal(seasonStart("2026-10-12"), "2026-09-01");
   assert.equal(seasonStart("2027-02-01"), "2026-09-01");
 });
+
+test("0 h de chauffe démenti par 27 kWh de gaz : panne du thermostat, le gaz reste du chauffage", async () => {
+  const { gasWeek } = await import("../src/lib/gas.ts");
+  const w = gasWeek([{ day: "2026-10-21", gas_kwh: 27.7, temp_ext: 9.57, heating_hours: 0 }], "2026-10-19");
+  const d = w.days.find((x) => x.date === "2026-10-21")!;
+  assert.equal(d.heatingHours, null);
+  assert.ok(d.heatingKwh! > 27);
+  const ete = gasWeek([{ day: "2026-10-14", gas_kwh: 0.67, temp_ext: 13, heating_hours: 0 }], "2026-10-12");
+  assert.equal(ete.days.find((x) => x.date === "2026-10-14")!.cookingKwh, 0.67);
+});

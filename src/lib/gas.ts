@@ -13,6 +13,12 @@ export const GAS = {
    * (29 kWh sur 122 jours). À recalculer chaque fin d'été.
    */
   cookingKwhPerDay: 0.25,
+  /**
+   * Au-delà, « 0 h de chauffe » est une panne du thermostat, pas un jour sans chauffage : la
+   * cuisson seule n'a jamais dépassé 0,9 kWh/jour l'été. Cas réel du 19 au 23/10/2026 : Netatmo
+   * indisponible (erreur 429 au redémarrage), 0 h enregistrée, 19 à 30 kWh comptés en cuisson.
+   */
+  maxCookingKwhPerDay: 2,
   /** Base des degrés-jours unifiés (DJU) : 18 °C, la convention française. */
   djuBaseC: 18,
 };
@@ -68,6 +74,11 @@ function addDays(iso: string, k: number): string {
 }
 
 /** Sépare un total journalier de gaz en cuisson (socle) et chauffage (le reste). */
+/** Heures de chauffe, ou null si « 0 h » est démenti par le gaz consommé (thermostat en panne). */
+export function trustedHours(hours: number | null, gasKwh: number | null): number | null {
+  return hours === 0 && gasKwh != null && gasKwh > GAS.maxCookingKwhPerDay ? null : hours;
+}
+
 export function splitGas(gasKwh: number, cookingKwhPerDay = GAS.cookingKwhPerDay) {
   const cooking = Math.min(Math.max(gasKwh, 0), cookingKwhPerDay);
   return { cookingKwh: round(cooking), heatingKwh: round(Math.max(gasKwh - cooking, 0)) };
@@ -85,7 +96,7 @@ export function gasWeek(rows: GasDayRow[], weekStart: string): GasWeek {
     const r = byDay.get(date);
     const gas = n(r?.gas_kwh);
     const temp = n(r?.temp_ext);
-    const hours = n(r?.heating_hours);
+    const hours = trustedHours(n(r?.heating_hours), gas);
     // Le thermostat dit que la chaudière n'a pas chauffé : tout le gaz du jour est de la
     // cuisson (un gros repas dépasse vite le socle moyen de 0,25 kWh).
     const split = gas == null ? null : hours === 0 ? { cookingKwh: round(Math.max(gas, 0)), heatingKwh: 0 } : splitGas(gas);
@@ -157,7 +168,7 @@ export function stoveEffect(rows: GasDayRow[]): StoveEffect {
     if (gas == null || temp == null || r.stove_on == null) continue;
     const d = dju(temp);
     if (d < STOVE.minDayDju) continue;
-    const hours = n(r.heating_hours);
+    const hours = trustedHours(n(r.heating_hours), gas);
     const heating = hours === 0 ? 0 : splitGas(gas).heatingKwh;
     const g = groups[r.stove_on ? "on" : "off"];
     g.days += 1;
