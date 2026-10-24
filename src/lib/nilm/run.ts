@@ -10,7 +10,8 @@ export async function runClustering(housePowerW: number | null = null) {
     fetchDeviceStates().catch(() => []), // fonction SQL pas encore installée : pas de contexte
   ]);
   const now = Date.now();
-  const result = runPipeline(events, existing, now, deviceContexts(states, now));
+  const contexts = deviceContexts(states, now);
+  const result = runPipeline(events, existing, now, contexts);
   const saved = await saveClustering({
     clusters: result.clusters,
     sessions: result.sessions,
@@ -26,6 +27,6 @@ export async function runClustering(housePowerW: number | null = null) {
       avg_duration_min: Number(c.avg_duration_min),
       usual_start_min: usualStartMinute(result.sessions.filter((s) => s.cluster_key === `id:${c.id}`).map((s) => s.start_ts)),
     }));
-  const running: RunningSession[] = runningSessions(merged, pairSessions(merged, now).sessions, named, now, housePowerW);
+  const running: RunningSession[] = runningSessions(merged, pairSessions(merged, now).sessions, named, now, housePowerW, contexts);
   return { stats: result.stats, saved, running };
 }

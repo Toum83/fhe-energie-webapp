@@ -523,3 +523,14 @@ test("OFF partagé : les off_event_id restent uniques (contrainte de la base)", 
   assert.equal(sessions.length, 2);
   assert.equal(new Set(sessions.map((s) => s.off_event_id)).size, 2);
 });
+
+test("compteur en direct : une chauffe mesurée par la prise du lave-linge n'est pas comptée comme chauffe-eau", async () => {
+  const { runningSessions, deviceContexts } = await import("../src/lib/nilm/algorithm.ts");
+  const iso = (s: string) => new Date(s).toISOString();
+  const on: PowerEvent = { ...ev(iso("2026-10-24T15:02:00Z"), 2000), power_before: 400, power_after: 2400 };
+  const named = [{ id: 7, centroid_power_w: 1900, avg_duration_min: 150, usual_start_min: null }];
+  const now = Date.parse("2026-10-24T15:45:00Z");
+  assert.equal(runningSessions([on], [], named, now).length, 1);
+  const ctx = deviceContexts([{ device: "lave_linge", ts: "2026-10-24T15:01:30Z", state: "on" }], now);
+  assert.equal(runningSessions([on], [], named, now, null, ctx).length, 0);
+});

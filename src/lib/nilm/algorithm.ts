@@ -631,13 +631,24 @@ export function runningSessions(
   named: { id: number; centroid_power_w: number; avg_duration_min: number; usual_start_min?: number | null }[],
   nowMs: number,
   housePowerW: number | null = null,
+  contexts: DeviceContext[] = [],
 ): RunningSession[] {
   const paired = new Set(sessions.map((s) => s.on_event_id));
+  // Démarrage pendant une chauffe mesurée par une prise (lave-linge, lave-vaisselle) : c'est
+  // elle, pas un appareil NILM. Cas réel du 24/10/2026 : chauffe du lave-linge à 17 h comptée
+  // 1,4 kWh en direct comme chauffe-eau (barre négative dans HA).
+  const measured = (iso: string) => {
+    const t = ts(iso);
+    return contexts.some(
+      (ctx) => ctx.exclusiveMinPowerW != null && ctx.on.some(([a, b]) => t >= a - 120000 && t <= b),
+    );
+  };
   const long = named.filter((c) => c.avg_duration_min >= RUNNING.minClusterDurationMin);
   const out: RunningSession[] = [];
   for (let i = 0; i < merged.length; i++) {
     const on = merged[i];
     if (on.direction !== "on" || on.delta_w < PARAMS.levelPairMinW || paired.has(on.id)) continue;
+    if (measured(on.ts)) continue;
     const elapsedMin = (nowMs - ts(on.ts)) / 60000;
     if (elapsedMin < 0 || elapsedMin * 60 > PARAMS.pairWindowS) continue;
     const nominal = revealedPowerW(merged, i, merged.length) ?? on.delta_w;
