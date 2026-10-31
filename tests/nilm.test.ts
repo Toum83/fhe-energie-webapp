@@ -587,3 +587,23 @@ test("courbe à 7 s : les impulsions d'un four en régulation restent des sessio
     PARAMS.fineSamplingSince = saved;
   }
 });
+
+test("courbe à 7 s : l'arrêt d'une impulsion lui est réservé, un appareil plus ancien ne le prend pas", () => {
+  nextId = 1;
+  const saved = PARAMS.fineSamplingSince;
+  PARAMS.fineSamplingSince = at(2, 0);
+  try {
+    const events = [
+      lev(at(2, 12, 23), 100, 395), // petit appareil (~295 W), arrêt bien plus tard
+      lev(at(2, 15, 56), 1350, 1740), // impulsion de 7 s, +390 W
+      lev(new Date(Date.parse(at(2, 15, 56)) + 7000).toISOString(), 1740, 1352),
+      lev(at(2, 17, 47), 1200, 596), // arrêt de −604 W, sans rapport
+    ];
+    const { sessions } = pairSessions(mergeEvents(events), Date.parse(at(3, 0)));
+    const pulse = sessions.find((s) => s.start_ts === at(2, 15, 56));
+    assert.ok(pulse);
+    assert.ok(pulse.duration_min < 0.2);
+  } finally {
+    PARAMS.fineSamplingSince = saved;
+  }
+});

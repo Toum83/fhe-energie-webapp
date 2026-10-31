@@ -80,6 +80,8 @@ export const PARAMS = {
    */
   fineSamplingSince: "2026-10-31T14:54:56Z" as string | null,
   fineWindowS: 20,
+  /** Courbe à 7 s : un ON suivi d'un OFF de même amplitude en moins de ça est une impulsion (voir pairSessions). */
+  pulseMaxS: 120,
   /** Au-delà, un ON sans OFF correspondant est abandonné. */
   pairWindowS: 4 * 3600,
   /** Tolérance de magnitude entre un ON et son OFF : max(35 % du ON, 250 W). */
@@ -236,6 +238,25 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
   // device_sessions.off_event_id est unique en base : une 2e session fermée par le même OFF prend
   // son propre ON comme référence de fin (end_ts reste la vraie heure de fin).
   const offTaken = new Set<number>();
+  // Courbe à 7 s : un OFF qui suit immédiatement un ON de même amplitude (impulsion) lui est
+  // réservé. Cas réel du 31/10/2026 : un appareil de 295 W démarré à 12 h 23 a pris l'arrêt
+  // (−388 W, 15 h 56 m 55 s) d'une impulsion de 7 s ; l'impulsion est allée chercher un arrêt
+  // de −604 W à 17 h 47, et cette fausse session de 110 min a compté 0,9 kWh au thermodynamique.
+  const reservedBy = new Map<number, number>();
+  for (let i = 0; i + 1 < merged.length; i++) {
+    const on = merged[i];
+    const off = merged[i + 1];
+    if (
+      on.direction === "on" &&
+      off.direction === "off" &&
+      isFine(on.ts) &&
+      (ts(off.ts) - ts(on.ts)) / 1000 <= PARAMS.pulseMaxS &&
+      Math.abs(-off.delta_w - on.delta_w) <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW)
+    ) {
+      reservedBy.set(i + 1, i);
+    }
+  }
+  const takenElsewhere = (j: number, i: number) => reservedBy.has(j) && reservedBy.get(j) !== i;
   const sessions: Session[] = [];
   for (let i = 0; i < merged.length; i++) {
     const on = merged[i];
@@ -248,7 +269,7 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
       for (let j = i + 1; j < merged.length; j++) {
         const off = merged[j];
         if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
-        if (off.direction !== "off" || used.has(j)) continue;
+        if (off.direction !== "off" || used.has(j) || takenElsewhere(j, i)) continue;
         // OFF partagé : il doit lui rester de quoi couper cet appareil aussi.
         if (remaining.has(j) && left(j) < (1 - PARAMS.levelRelTol) * on.delta_w) continue;
         if (off.power_after != null && off.power_after <= ceiling) {
@@ -279,7 +300,7 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
       for (let j = i + 1; j < merged.length; j++) {
         const off = merged[j];
         if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
-        if (off.direction !== "off" || used.has(j)) continue;
+        if (off.direction !== "off" || used.has(j) || takenElsewhere(j, i)) continue;
         const err = Math.abs(left(j) - on.delta_w);
         if (err <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW) && (!best || err < best.err)) {
           best = { err, j };
