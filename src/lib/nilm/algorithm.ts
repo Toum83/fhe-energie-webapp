@@ -71,6 +71,15 @@ export const PARAMS = {
   mergeWindowMinuteS: 150,
   /** Passage de fhe_solar au relevé à la minute. */
   minutePollingSince: "2026-10-10T09:14:00Z",
+  /**
+   * Passage aux échelons tirés de la courbe FHE à 7 s (fhe_solar 0.4.0, déjà regroupés par
+   * l'intégration) : fusion et creux ramenés à 20 s. Avec 150 s, les impulsions d'un four en
+   * régulation (7 s toutes les 70 s, 31/10/2026) passaient pour des creux et formaient une seule
+   * longue chauffe. Début de la courbe à 7 s rattrapée (supabase/backfill_2026-10-31_7s.sql), juste
+   * avant l'installation de la 0.4.0.
+   */
+  fineSamplingSince: "2026-10-31T14:54:56Z" as string | null,
+  fineWindowS: 20,
   /** Au-delà, un ON sans OFF correspondant est abandonné. */
   pairWindowS: 4 * 3600,
   /** Tolérance de magnitude entre un ON et son OFF : max(35 % du ON, 250 W). */
@@ -154,7 +163,7 @@ export function removeDips(sorted: PowerEvent[]): PowerEvent[] {
     if (
       off.direction === "off" &&
       on?.direction === "on" &&
-      (ts(on.ts) - ts(off.ts)) / 1000 <= PARAMS.dipWindowS &&
+      (ts(on.ts) - ts(off.ts)) / 1000 <= (isFine(off.ts) ? PARAMS.fineWindowS : PARAMS.dipWindowS) &&
       on.delta_w >= PARAMS.dipRecoverRatio * -off.delta_w
     ) {
       const rest = on.delta_w + off.delta_w;
@@ -169,8 +178,14 @@ export function removeDips(sorted: PowerEvent[]): PowerEvent[] {
   return out;
 }
 
+/** Événement issu de la courbe à 7 s (voir PARAMS.fineSamplingSince). */
+function isFine(iso: string): boolean {
+  return PARAMS.fineSamplingSince != null && ts(iso) >= ts(PARAMS.fineSamplingSince);
+}
+
 /** Fenêtre de fusion selon le rythme de relevé en vigueur à cet instant. */
 export function mergeWindowAt(iso: string): number {
+  if (isFine(iso)) return PARAMS.fineWindowS;
   return ts(iso) >= ts(PARAMS.minutePollingSince) ? PARAMS.mergeWindowMinuteS : PARAMS.mergeWindowS;
 }
 

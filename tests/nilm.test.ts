@@ -6,6 +6,7 @@ import {
   feature,
   mergeEvents,
   pairSessions,
+  PARAMS,
   runPipeline,
   type ExistingCluster,
   type PowerEvent,
@@ -566,4 +567,23 @@ test("doublon : deux sessions d'une même carte qui se recouvrent, on garde la p
   const named = sessions.filter((s) => s.cluster_key === "id:57");
   assert.equal(named.length, 1);
   assert.equal(Math.round(named[0].power_w), 512);
+});
+
+test("courbe à 7 s : les impulsions d'un four en régulation restent des sessions courtes", () => {
+  nextId = 1;
+  const saved = PARAMS.fineSamplingSince;
+  PARAMS.fineSamplingSince = at(2, 0);
+  try {
+    // 2,3 kW pendant 7 s toutes les 70 s, trois fois.
+    const events = [0, 70, 140].flatMap((s) => {
+      const on = new Date(Date.parse(at(2, 18)) + s * 1000);
+      const off = new Date(on.getTime() + 7000);
+      return [lev(on.toISOString(), 1240, 3540), lev(off.toISOString(), 3540, 1240)];
+    });
+    const { sessions } = pairSessions(mergeEvents(events));
+    assert.equal(sessions.length, 3);
+    assert.ok(sessions.every((x) => x.duration_min < 0.2));
+  } finally {
+    PARAMS.fineSamplingSince = saved;
+  }
 });
