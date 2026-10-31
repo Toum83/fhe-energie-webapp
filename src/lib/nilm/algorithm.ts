@@ -82,6 +82,13 @@ export const PARAMS = {
   fineWindowS: 20,
   /** Courbe à 7 s : un ON suivi d'un OFF de même amplitude en moins de ça est une impulsion (voir pairSessions). */
   pulseMaxS: 120,
+  /**
+   * Courbe à 7 s : seuil de détection abaissé à 80 W (input_number.nilm_event_threshold_w, 31/10/2026 ;
+   * démarrage d'un PC à +115 W). La tolérance d'appariement absolue suit : 250 W laissait un ON de
+   * 100 W prendre un OFF de 340 W.
+   */
+  fineMinStepW: 80,
+  pairAbsTolFineW: 80,
   /** Au-delà, un ON sans OFF correspondant est abandonné. */
   pairWindowS: 4 * 3600,
   /** Tolérance de magnitude entre un ON et son OFF : max(35 % du ON, 250 W). */
@@ -169,7 +176,7 @@ export function removeDips(sorted: PowerEvent[]): PowerEvent[] {
       on.delta_w >= PARAMS.dipRecoverRatio * -off.delta_w
     ) {
       const rest = on.delta_w + off.delta_w;
-      if (rest >= PARAMS.minStepW) {
+      if (rest >= minStepAt(off.ts)) {
         out.push({ ...on, delta_w: rest, power_before: off.power_before ?? on.power_before });
       }
       i++; // le ON est consommé avec le creux
@@ -183,6 +190,16 @@ export function removeDips(sorted: PowerEvent[]): PowerEvent[] {
 /** Événement issu de la courbe à 7 s (voir PARAMS.fineSamplingSince). */
 function isFine(iso: string): boolean {
   return PARAMS.fineSamplingSince != null && ts(iso) >= ts(PARAMS.fineSamplingSince);
+}
+
+/** Plus petit échelon gardé à cet instant (seuil de l'automation HA en vigueur). */
+function minStepAt(iso: string): number {
+  return isFine(iso) ? PARAMS.fineMinStepW : PARAMS.minStepW;
+}
+
+/** Écart de magnitude toléré entre un ON et son OFF. */
+function pairTol(on: PowerEvent): number {
+  return Math.max(PARAMS.pairRelTol * on.delta_w, isFine(on.ts) ? PARAMS.pairAbsTolFineW : PARAMS.pairAbsTolW);
 }
 
 /** Fenêtre de fusion selon le rythme de relevé en vigueur à cet instant. */
@@ -251,7 +268,7 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
       off.direction === "off" &&
       isFine(on.ts) &&
       (ts(off.ts) - ts(on.ts)) / 1000 <= PARAMS.pulseMaxS &&
-      Math.abs(-off.delta_w - on.delta_w) <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW)
+      Math.abs(-off.delta_w - on.delta_w) <= pairTol(on)
     ) {
       reservedBy.set(i + 1, i);
     }
@@ -292,7 +309,7 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
       next.direction === "off" &&
       !used.has(i + 1) &&
       (ts(next.ts) - ts(on.ts)) / 1000 <= PARAMS.pairWindowS &&
-      Math.abs(left(i + 1) - on.delta_w) <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW)
+      Math.abs(left(i + 1) - on.delta_w) <= pairTol(on)
     ) {
       best = { err: Math.abs(left(i + 1) - on.delta_w), j: i + 1 };
     }
@@ -302,7 +319,7 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
         if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
         if (off.direction !== "off" || used.has(j) || takenElsewhere(j, i)) continue;
         const err = Math.abs(left(j) - on.delta_w);
-        if (err <= Math.max(PARAMS.pairRelTol * on.delta_w, PARAMS.pairAbsTolW) && (!best || err < best.err)) {
+        if (err <= pairTol(on) && (!best || err < best.err)) {
           best = { err, j };
         }
       }
@@ -312,7 +329,7 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
     const offMag = left(best.j);
     // Par niveau, l'appareil ne consomme que son propre saut ; sinon le OFF est épuisé.
     const rest = byLevel && best.err === 0 ? offMag - on.delta_w : 0;
-    if (rest >= PARAMS.minStepW) remaining.set(best.j, rest);
+    if (rest >= minStepAt(off.ts)) remaining.set(best.j, rest);
     else used.add(best.j);
     const durationMin = (ts(off.ts) - ts(on.ts)) / 60000;
     let powerW = byLevel && best.err === 0 ? on.delta_w : (on.delta_w + offMag) / 2;
