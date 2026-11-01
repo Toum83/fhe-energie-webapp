@@ -2,12 +2,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  clusterSessions,
   dbscan,
   feature,
   mergeEvents,
   pairSessions,
   PARAMS,
+  pulseTrainSessions,
   runPipeline,
+  type Session,
   type ExistingCluster,
   type PowerEvent,
 } from "../src/lib/nilm/algorithm.ts";
@@ -646,4 +649,44 @@ test("« C'était quoi ? » : sessions récentes et significatives des cartes sa
     now,
   );
   assert.deepEqual(out.map((x) => x.cluster_id), [182, 186]);
+});
+
+/** Une session déjà appariée, début à `startS` secondes après 18 h le 2. */
+function sess(startS: number, durS: number, watts = 2140): Session {
+  const a = Date.parse(at(2, 18)) + startS * 1000;
+  nextId += 2;
+  return {
+    on_event_id: nextId - 2,
+    off_event_id: nextId - 1,
+    start_ts: new Date(a).toISOString(),
+    end_ts: new Date(a + durS * 1000).toISOString(),
+    power_w: watts,
+    duration_min: durS / 60,
+    pct_solar: 0,
+  };
+}
+/** Série du fer du 01/11/2026 : impulsions de 6 à 90 s, une toutes les ~140 s. */
+const ironTrain = (offsetS = 0) => [30, 6, 66, 12, 48, 42, 90, 24].map((d, k) => sess(offsetS + k * 140, d));
+
+test("fer à repasser : une série d'impulsions espacées est reconnue", () => {
+  assert.equal(pulseTrainSessions(ironTrain()).size, 8);
+  assert.equal(pulseTrainSessions(ironTrain().slice(0, 5)).size, 0); // trop courte
+});
+
+test("fer à repasser : la régulation d'un four (7 s toutes les 70 s) ou une série après préchauffe n'en est pas", () => {
+  const oven = Array.from({ length: 20 }, (_, k) => sess(k * 70, 7));
+  assert.equal(pulseTrainSessions(oven).size, 0);
+  const preheat = sess(-20 * 60, 15 * 60, 2200); // 15 min à pleine puissance, finie 5 min avant
+  assert.equal(pulseTrainSessions([preheat, ...ironTrain()]).size, 0);
+});
+
+test("fer à repasser : la série va à sa carte, une impulsion isolée reste au four", () => {
+  const existing: ExistingCluster[] = [
+    { id: 50, label: "Four · impulsions 2 kW", centroid_power_w: 2200, centroid_log_duration: Math.log(0.3) },
+    { id: 60, label: "Fer à repasser", centroid_power_w: 2140, centroid_log_duration: Math.log(0.5) },
+  ];
+  const lone = sess(-3 * 3600, 20);
+  const out = clusterSessions([lone, ...ironTrain()], existing).sessions;
+  assert.equal(out[0].cluster_key, "id:50");
+  assert.ok(out.slice(1).every((x) => x.cluster_key === "id:60"));
 });

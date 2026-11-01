@@ -576,9 +576,68 @@ export function onShare(s: Session, ctx: DeviceContext): number {
   return covered / (b - a);
 }
 
+/**
+ * Fer à repasser : son thermostat fait des impulsions de ~2 kW (6 à 90 s) toutes les 1 à 3 min,
+ * indiscernables une à une d'une impulsion de four ou d'une bouilloire. C'est la série qui le
+ * trahit : beaucoup d'impulsions rapprochées SANS préchauffe longue juste avant (le four commence
+ * toujours par 10 min et plus à pleine puissance). Cas réel du 01/11/2026, 17 h 54 → 18 h 39 :
+ * 20 impulsions à 2,14 kW, rangées dans « Four · impulsions 2 kW » (17) et « Bouilloire » (3).
+ */
+export const PULSE_TRAIN = {
+  labelPrefix: "Fer à repasser",
+  minPowerW: 1600,
+  maxPowerW: 2700,
+  maxPulseMin: 2,
+  /** Écart maximal entre la fin d'une impulsion et le début de la suivante. */
+  maxGapMin: 5,
+  minPulses: 6,
+  /**
+   * Période médiane (début à début) au moins égale à ça : le four régule comme une horloge, une
+   * impulsion toutes les 70 s (31/10/2026, 4 séries sans préchauffe visible) ; le fer revient
+   * toutes les ~140 s, au gré du repassage.
+   */
+  minMedianPeriodS: 100,
+  /** Une chauffe longue de même gamme qui finit moins de 30 min avant la série = un four. */
+  preheatMinMin: 8,
+  preheatLookbackMin: 30,
+} as const;
+
+/** Indices des sessions qui forment une série d'impulsions de fer à repasser. */
+export function pulseTrainSessions(sessions: Session[]): Set<number> {
+  const P = PULSE_TRAIN;
+  const inRange = (s: Session) => s.power_w >= P.minPowerW && s.power_w <= P.maxPowerW;
+  const pulses = sessions
+    .flatMap((s, i) => (inRange(s) && s.duration_min <= P.maxPulseMin && s.end_ts ? [i] : []))
+    .sort((a, b) => ts(sessions[a].start_ts) - ts(sessions[b].start_ts));
+  const preheatEnds = sessions.filter((s) => inRange(s) && s.duration_min >= P.preheatMinMin && s.end_ts).map((s) => ts(s.end_ts));
+  const out = new Set<number>();
+  const flush = (train: number[]) => {
+    if (train.length < P.minPulses) return;
+    const a = ts(sessions[train[0]].start_ts);
+    const b = ts(sessions[train.at(-1)!].end_ts);
+    if (preheatEnds.some((e) => e >= a - P.preheatLookbackMin * 60000 && e <= b)) return;
+    const periods = train.slice(1).map((i, k) => ts(sessions[i].start_ts) - ts(sessions[train[k]].start_ts));
+    if (median(periods) < P.minMedianPeriodS * 1000) return;
+    train.forEach((i) => out.add(i));
+  };
+  let train: number[] = [];
+  for (const i of pulses) {
+    const prev = train.at(-1);
+    if (prev != null && ts(sessions[i].start_ts) - ts(sessions[prev].end_ts) > P.maxGapMin * 60000) {
+      flush(train);
+      train = [];
+    }
+    train.push(i);
+  }
+  flush(train);
+  return out;
+}
+
 /** Vrai si la session ne peut pas rejoindre ce cluster nommé (appareil éteint pendant la session). */
 function forbidden(s: Session, c: ExistingCluster, contexts: DeviceContext[]): boolean {
   const label = c.label ?? "";
+  // Le fer ne prend que des séries d'impulsions (voir clusterSessions), jamais une impulsion isolée.
+  if (label.startsWith(PULSE_TRAIN.labelPrefix)) return true;
   return contexts.some((ctx) => {
     if (s.end_ts < ctx.since) return false; // session finie avant le début du suivi
     const share = onShare(s, ctx);
@@ -601,7 +660,17 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
     c.centroid_log_duration / PARAMS.durationLogScale,
   ];
 
+  // Séries d'impulsions : toutes à la carte du fer, quelle que soit la durée de chaque impulsion
+  // (6 à 90 s, trop étalé pour le rayon d'attraction) ; sans cette carte, une carte à part, à nommer.
+  const trains = pulseTrainSessions(sessions);
+  const iron = named.find((c) => c.label!.startsWith(PULSE_TRAIN.labelPrefix));
+  const trainOrphans: number[] = [];
   sessions.forEach((s, i) => {
+    if (trains.has(i)) {
+      if (iron) assignment[i] = `id:${iron.id}`;
+      else trainOrphans.push(i);
+      return;
+    }
     const f = feature(s.power_w, s.duration_min);
     let best: { d: number; c: ExistingCluster } | null = null;
     for (const c of named) {
@@ -646,6 +715,7 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
     const key = `new:${l}`;
     groups.set(key, [...(groups.get(key) ?? []), orphans[k]]);
   });
+  if (trainOrphans.length > 0) groups.set("new:train", trainOrphans);
 
   // Clusters non nommés : réutiliser l'id de l'ancien cluster le plus proche (stabilité des ids).
   const freeUnnamed = [...unnamed];
@@ -709,6 +779,7 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
   labels.forEach((l, k) => {
     if (l >= 0) out[orphans[k]].cluster_key = keyRemap.get(`new:${l}`) ?? null;
   });
+  trainOrphans.forEach((i) => (out[i].cluster_key = keyRemap.get("new:train") ?? null));
 
   return {
     sessions: out,
