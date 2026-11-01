@@ -461,6 +461,65 @@ function localHour(iso: string): number {
 export type DeviceState = { device: string; ts: string; state: string };
 
 /**
+ * Prises mesurées : HA envoie dans device_states `device = "prise:<nom>"`, `state = <W>` à chaque
+ * variation d'au moins 60 W (lave-vaisselle, coin cinéma). Leur puissance est retirée des échelons
+ * de la maison avant la recherche d'appareils : un appareil déjà mesuré ne doit ni former de
+ * cartes ni brouiller les autres (31/10/2026 : chauffes du lave-vaisselle appariées avec d'autres
+ * appareils, projecteur confondu avec le thermodynamique).
+ */
+export const PLUG_PREFIX = "prise:";
+/** Une prise et le compteur FHE datent le même changement à ±30 s près (relevé 10 s / courbe 7 s). */
+export const PLUG_WINDOW_S = 40;
+
+export function subtractPlugs(merged: PowerEvent[], states: DeviceState[]): PowerEvent[] {
+  const series = new Map<string, [number, number][]>();
+  for (const s of states) {
+    if (!s.device.startsWith(PLUG_PREFIX)) continue;
+    const w = Number(s.state);
+    if (!Number.isFinite(w)) continue;
+    const list = series.get(s.device) ?? [];
+    list.push([ts(s.ts), w]);
+    series.set(s.device, list);
+  }
+  if (series.size === 0) return merged;
+  for (const list of series.values()) list.sort((a, b) => a[0] - b[0]);
+  // Puissance d'une prise à l'instant t (dernière valeur connue) ; null avant son premier relevé.
+  const levelAt = (list: [number, number][], t: number): number | null => {
+    let lo = 0, hi = list.length - 1, found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid][0] <= t) { found = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return found < 0 ? null : list[found][1];
+  };
+  const out: PowerEvent[] = [];
+  for (const e of merged) {
+    const t = ts(e.ts);
+    let before = 0;
+    let after = 0;
+    for (const list of series.values()) {
+      const b = levelAt(list, t - PLUG_WINDOW_S * 1000);
+      const a = levelAt(list, t + PLUG_WINDOW_S * 1000);
+      if (b == null || a == null) continue;
+      before += b;
+      after += a;
+    }
+    // Les niveaux sont toujours corrigés (même sans variation de prise) : l'appariement par retour
+    // au niveau compare des niveaux pris à des heures différentes, prise allumée ou non.
+    const delta = e.delta_w - (after - before);
+    if (Math.abs(delta) < minStepAt(e.ts)) continue; // échelon entièrement expliqué par une prise
+    out.push({
+      ...e,
+      delta_w: delta,
+      direction: delta > 0 ? "on" : "off",
+      power_before: e.power_before != null ? e.power_before - before : e.power_before,
+      power_after: e.power_after != null ? e.power_after - after : e.power_after,
+    });
+  }
+  return out;
+}
+
+/**
  * Contexte d'un appareil dont HA connaît l'état : ses sessions ne peuvent rejoindre les cartes
  * dont le nom commence par `labelPrefix` que si l'appareil était allumé pendant au moins
  * `minOnShare` de la session. Cas réel : vidéoprojecteur (~140 W + ~400-650 W en lecture) et
@@ -764,8 +823,9 @@ export function runPipeline(
   existing: ExistingCluster[],
   nowMs = Infinity,
   contexts: DeviceContext[] = [],
+  states: DeviceState[] = [],
 ): ClusteringResult {
-  const merged = mergeEvents(events);
+  const merged = subtractPlugs(mergeEvents(events), states);
   const { sessions, unpaired } = pairSessions(merged, nowMs);
   const clustered = clusterSessions(sessions, existing, contexts);
   const noise = clustered.sessions.filter((s) => s.cluster_key == null).length;

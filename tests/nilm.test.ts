@@ -607,3 +607,22 @@ test("courbe à 7 s : l'arrêt d'une impulsion lui est réservé, un appareil pl
     PARAMS.fineSamplingSince = saved;
   }
 });
+
+test("prises mesurées : leurs échelons sont retirés de ceux de la maison", async () => {
+  const { subtractPlugs } = await import("../src/lib/nilm/algorithm.ts");
+  nextId = 1;
+  const states = [
+    { device: "prise:lave_vaisselle", ts: at(3, 12, 0), state: "2" },
+    { device: "prise:lave_vaisselle", ts: new Date(Date.parse(at(3, 12, 15)) - 10000).toISOString(), state: "1790" },
+    { device: "prise:lave_vaisselle", ts: at(3, 12, 29), state: "45" },
+  ];
+  const events = [
+    lev(at(3, 12, 15), 300, 2090), // chauffe du lave-vaisselle vue par la maison
+    lev(at(3, 12, 22), 2090, 3790), // bouilloire pendant la chauffe
+    lev(at(3, 12, 29), 3790, 2045), // fin de chauffe
+  ];
+  const out = subtractPlugs(mergeEvents(events), states);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].delta_w, 1700);
+  assert.equal(out[0].power_before, 300);
+});
