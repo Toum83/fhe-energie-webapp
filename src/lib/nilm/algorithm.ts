@@ -592,11 +592,13 @@ export const PULSE_TRAIN = {
   maxGapMin: 5,
   minPulses: 6,
   /**
-   * Période médiane (début à début) au moins égale à ça : le four régule comme une horloge, une
-   * impulsion toutes les 70 s (31/10/2026, 4 séries sans préchauffe visible) ; le fer revient
-   * toutes les ~140 s, au gré du repassage.
+   * Le four régule comme une horloge : une impulsion toutes les 70 s (31/10/2026, 4 séries sans
+   * préchauffe visible, 90 % des écarts entre 63 et 77 s). Le fer revient au gré du repassage,
+   * toutes les 35 à 240 s (01/11/2026 : 3 écarts sur 19 et 0 sur 8 dans cette plage). Une série dont
+   * au moins la moitié des écarts (début à début) tombe dans la plage du four n'est pas un fer.
    */
-  minMedianPeriodS: 100,
+  ovenPeriodS: [60, 80] as [number, number],
+  maxOvenPeriodShare: 0.5,
   /** Une chauffe longue de même gamme qui finit moins de 30 min avant la série = un four. */
   preheatMinMin: 8,
   preheatLookbackMin: 30,
@@ -617,7 +619,9 @@ export function pulseTrainSessions(sessions: Session[]): Set<number> {
     const b = ts(sessions[train.at(-1)!].end_ts);
     if (preheatEnds.some((e) => e >= a - P.preheatLookbackMin * 60000 && e <= b)) return;
     const periods = train.slice(1).map((i, k) => ts(sessions[i].start_ts) - ts(sessions[train[k]].start_ts));
-    if (median(periods) < P.minMedianPeriodS * 1000) return;
+    const [lo, hi] = P.ovenPeriodS;
+    const ovenLike = periods.filter((d) => d >= lo * 1000 && d <= hi * 1000).length;
+    if (ovenLike >= P.maxOvenPeriodShare * periods.length) return;
     train.forEach((i) => out.add(i));
   };
   let train: number[] = [];

@@ -671,6 +671,9 @@ const ironTrain = (offsetS = 0) => [30, 6, 66, 12, 48, 42, 90, 24].map((d, k) =>
 test("fer à repasser : une série d'impulsions espacées est reconnue", () => {
   assert.equal(pulseTrainSessions(ironTrain()).size, 8);
   assert.equal(pulseTrainSessions(ironTrain().slice(0, 5)).size, 0); // trop courte
+  // Repassage serré du 01/11/2026 vers 20 h 50 : une impulsion toutes les ~42 s, irrégulière.
+  const fast = [0, 224, 266, 378, 420, 462, 511, 553, 595].map((t, k) => sess(t, [66, 24, 24, 12, 6, 24, 24, 24, 12][k]));
+  assert.equal(pulseTrainSessions(fast).size, 9);
 });
 
 test("fer à repasser : la régulation d'un four (7 s toutes les 70 s) ou une série après préchauffe n'en est pas", () => {
