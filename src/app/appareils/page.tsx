@@ -1,9 +1,11 @@
 import { headers } from "next/headers";
 import { CopyBlock } from "@/components/nilm/CopyBlock";
 import { RunButton } from "@/components/nilm/RunButton";
-import { ClusterCard, SessionList, type SessionRow } from "@/components/nilm/ClusterCard";
+import { ClusterCard, SessionList, type ClusterView, type SessionRow } from "@/components/nilm/ClusterCard";
+import { FamilyCard } from "@/components/nilm/FamilyCard";
 import { adminConfigured, isAdmin } from "@/lib/nilm/auth";
 import { dbConfigured, fetchClusters, fetchRecentSessions, type RecentSession, type StoredCluster } from "@/lib/nilm/db";
+import { splitFamily } from "@/lib/nilm/group";
 import { haRestYaml } from "@/lib/nilm/ha";
 import { toIdentifyNow } from "@/lib/nilm/identify";
 
@@ -134,24 +136,13 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
       ) : null}
 
       <div className="flex flex-col gap-4">
-        {clusters.map((c, i) => (
-          <ClusterCard
-            key={c.id}
-            index={i + 2}
-            cluster={{
-              id: c.id,
-              label: c.label,
-              icon: c.icon,
-              centroid_power_w: Number(c.centroid_power_w),
-              avg_duration_min: Number(c.avg_duration_min),
-              occurrences: c.occurrences,
-              avg_pct_solar: c.avg_pct_solar == null ? null : Number(c.avg_pct_solar),
-              hourly: c.hourly,
-              last_seen: c.last_seen,
-            }}
-            sessions={byCluster.get(c.id) ?? []}
-          />
-        ))}
+        {byFamily(clusters).map((entry, i) =>
+          entry.members.length > 1 ? (
+            <FamilyCard key={entry.key} name={entry.name} members={entry.members} sessionsById={byCluster} index={i + 2} />
+          ) : (
+            <ClusterCard key={entry.key} index={i + 2} cluster={entry.members[0]} sessions={byCluster.get(entry.members[0].id) ?? []} />
+          ),
+        )}
       </div>
 
       {isolated.length > 0 ? (
@@ -177,6 +168,42 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
 
 const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
 
+function toView(c: StoredCluster): ClusterView {
+  return {
+    id: c.id,
+    label: c.label,
+    icon: c.icon,
+    centroid_power_w: Number(c.centroid_power_w),
+    avg_duration_min: Number(c.avg_duration_min),
+    occurrences: c.occurrences,
+    avg_pct_solar: c.avg_pct_solar == null ? null : Number(c.avg_pct_solar),
+    hourly: c.hourly,
+    last_seen: c.last_seen,
+  };
+}
+
+/** Cartes nommées « Famille · régime » réunies en un appareil, à la place de la première d'entre elles. */
+function byFamily(clusters: StoredCluster[]) {
+  const out: { key: string; name: string; members: ClusterView[] }[] = [];
+  const families = new Map<string, (typeof out)[number]>();
+  for (const c of clusters) {
+    const family = c.label ? splitFamily(c.label).family : null;
+    if (!family) {
+      out.push({ key: `c${c.id}`, name: c.label ?? "", members: [toView(c)] });
+      continue;
+    }
+    const k = family.toLocaleLowerCase("fr");
+    const entry = families.get(k);
+    if (entry) entry.members.push(toView(c));
+    else {
+      const e = { key: `f${k}`, name: family, members: [toView(c)] };
+      families.set(k, e);
+      out.push(e);
+    }
+  }
+  return out;
+}
+
 function durationText(min: number) {
   if (min < 60) return `${nf.format(min)} min`;
   const h = Math.floor(min / 60);
@@ -196,6 +223,7 @@ function toRow(r: RecentSession): SessionRow {
     end: timeFmt.format(new Date(r.end_ts)),
     power_w: Number(r.power_w),
     duration_min: Number(r.duration_min),
+    sortKey: start.getTime(),
   };
 }
 

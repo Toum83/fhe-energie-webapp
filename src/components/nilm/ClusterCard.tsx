@@ -16,7 +16,7 @@ export type ClusterView = {
 };
 
 /** Session déjà formatée côté serveur (heure de Paris), pour éviter tout décalage d'hydratation. */
-export type SessionRow = { key: string; day: string; start: string; end: string; power_w: number; duration_min: number };
+export type SessionRow = { key: string; day: string; start: string; end: string; power_w: number; duration_min: number; sortKey?: number };
 
 const ICONS = ["🔥", "🚿", "🧺", "🍽️", "🍳", "☕", "📺", "💻", "❄️", "🔌"];
 const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
