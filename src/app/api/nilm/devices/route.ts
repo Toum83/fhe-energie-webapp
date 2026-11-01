@@ -5,7 +5,7 @@ import { runClustering } from "@/lib/nilm/run";
 export const dynamic = "force-dynamic";
 
 /**
- * Lu par Home Assistant toutes les 15 min (plateforme rest, en-tête Authorization: Bearer
+ * Lu par Home Assistant toutes les 5 min (plateforme rest, en-tête Authorization: Bearer
  * NILM_ADMIN_TOKEN, paramètre ?p= : consommation actuelle de la maison en W). Recalcule d'abord les sessions pour que les compteurs suivent la journée,
  * puis renvoie l'énergie cumulée de chaque appareil nommé (jamais décroissante).
  */

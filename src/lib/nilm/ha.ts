@@ -28,7 +28,7 @@ export function haRestYaml(devices: NamedDevice[]): string {
     .join("\n");
   return `rest:
   - resource: !secret nilm_devices_url
-    scan_interval: 900
+    scan_interval: 300
     timeout: 60
     headers:
       Authorization: !secret nilm_admin_bearer
