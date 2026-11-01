@@ -70,7 +70,7 @@ export function ClusterCard({ cluster, index, sessions = [] }: { cluster: Cluste
   }
 
   return (
-    <article className="card rise p-5" style={{ "--i": index } as React.CSSProperties}>
+    <article id={`carte-${cluster.id}`} className="card rise scroll-mt-4 p-5" style={{ "--i": index } as React.CSSProperties}>
       <header className="flex items-start gap-3">
         <span aria-hidden className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-surface-2 text-xl">
           {cluster.icon ?? "❔"}

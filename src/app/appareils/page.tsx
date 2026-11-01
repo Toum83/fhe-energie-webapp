@@ -5,6 +5,7 @@ import { ClusterCard, SessionList, type SessionRow } from "@/components/nilm/Clu
 import { adminConfigured, isAdmin } from "@/lib/nilm/auth";
 import { dbConfigured, fetchClusters, fetchRecentSessions, type RecentSession, type StoredCluster } from "@/lib/nilm/db";
 import { haRestYaml } from "@/lib/nilm/ha";
+import { toIdentify } from "@/lib/nilm/identify";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Appareils · Bilan énergie", robots: { index: false, follow: false } };
@@ -70,6 +71,7 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
     byCluster.set(r.cluster_id, rows);
   }
   const isolated = byCluster.get(null) ?? [];
+  const toName = toIdentify(recent, new Set(clusters.filter((c) => c.label).map((c) => c.id)), Date.now());
 
   return (
     <div className="flex flex-col gap-4">
@@ -94,6 +96,36 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
       </section>
 
       {loadError ? <Notice title="Lecture impossible">{loadError}</Notice> : null}
+
+      {toName.length > 0 ? (
+        <section className="card rise p-5" style={{ "--i": 2 } as React.CSSProperties}>
+          <h2 className="text-base font-semibold tracking-tight">C&apos;était quoi ?</h2>
+          <p className="mt-1 text-sm leading-relaxed text-muted">
+            Appareils pas encore nommés qui ont tourné ces 48 dernières heures. Si vous savez ce qui marchait à ce
+            moment-là, nommez sa carte : toutes ses sessions, passées et à venir, seront comptées sous ce nom.
+          </p>
+          <ul className="mt-3 flex flex-col divide-y divide-border">
+            {toName.map((s) => {
+              const row = toRow(s);
+              return (
+                <li key={row.key} className="flex items-center justify-between gap-3 py-2 text-sm">
+                  <span className="min-w-0">
+                    <span className="font-medium">
+                      {row.day} · {row.start} → {row.end}
+                    </span>
+                    <span className="block text-xs text-muted">
+                      {nf.format(row.power_w)} W · {durationText(row.duration_min)} · appareil n°{s.cluster_id}
+                    </span>
+                  </span>
+                  <a href={`#carte-${s.cluster_id}`} className="shrink-0 text-xs font-medium underline underline-offset-2 hover:text-muted">
+                    Nommer →
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
 
       {clusters.length === 0 && !loadError ? (
         <Notice title="Aucun appareil pour l'instant">
@@ -141,6 +173,15 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
       </form>
     </div>
   );
+}
+
+const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
+
+function durationText(min: number) {
+  if (min < 60) return `${nf.format(min)} min`;
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  return m ? `${h} h ${String(m).padStart(2, "0")}` : `${h} h`;
 }
 
 const dayFmt = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", weekday: "short", day: "numeric", month: "short" });

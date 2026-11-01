@@ -626,3 +626,24 @@ test("prises mesurées : leurs échelons sont retirés de ceux de la maison", as
   assert.equal(out[0].delta_w, 1700);
   assert.equal(out[0].power_before, 300);
 });
+
+test("« C'était quoi ? » : sessions récentes et significatives des cartes sans nom seulement", async () => {
+  const { toIdentify } = await import("../src/lib/nilm/identify.ts");
+  const now = Date.parse("2026-11-01T10:00:00Z");
+  const s = (cluster_id: number | null, start: string, power_w: number, duration_min: number) => ({
+    cluster_id, start_ts: start, end_ts: start, power_w, duration_min,
+  });
+  const out = toIdentify(
+    [
+      s(186, "2026-10-31T12:23:00Z", 295, 213), // sans nom, récente : gardée
+      s(188, "2026-11-01T08:02:00Z", 330, 3), // nommée : écartée
+      s(190, "2026-10-31T15:00:00Z", 2300, 0.1), // impulsion de 7 s, < 0,05 kWh : écartée
+      s(null, "2026-10-31T20:00:00Z", 900, 30), // isolée : écartée
+      s(177, "2026-10-29T09:00:00Z", 900, 30), // trop ancienne : écartée
+      s(182, "2026-11-01T08:42:00Z", 335, 18), // sans nom, la plus récente : en tête
+    ],
+    new Set([188]),
+    now,
+  );
+  assert.deepEqual(out.map((x) => x.cluster_id), [182, 186]);
+});
