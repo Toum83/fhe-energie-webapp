@@ -32,3 +32,6 @@ export function toIdentify(
     .sort((a, b) => new Date(b.start_ts).getTime() - new Date(a.start_ts).getTime())
     .slice(0, limit);
 }
+
+/** toIdentify à l'instant présent (hors du rendu React, qui doit rester pur). */
+export const toIdentifyNow = (sessions: IdentifySession[], namedIds: Set<number>) => toIdentify(sessions, namedIds, Date.now());

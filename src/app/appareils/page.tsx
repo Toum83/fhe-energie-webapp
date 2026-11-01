@@ -5,7 +5,7 @@ import { ClusterCard, SessionList, type SessionRow } from "@/components/nilm/Clu
 import { adminConfigured, isAdmin } from "@/lib/nilm/auth";
 import { dbConfigured, fetchClusters, fetchRecentSessions, type RecentSession, type StoredCluster } from "@/lib/nilm/db";
 import { haRestYaml } from "@/lib/nilm/ha";
-import { toIdentify } from "@/lib/nilm/identify";
+import { toIdentifyNow } from "@/lib/nilm/identify";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Appareils · Bilan énergie", robots: { index: false, follow: false } };
@@ -71,7 +71,7 @@ export default async function AppareilsPage({ searchParams }: PageProps<"/appare
     byCluster.set(r.cluster_id, rows);
   }
   const isolated = byCluster.get(null) ?? [];
-  const toName = toIdentify(recent, new Set(clusters.filter((c) => c.label).map((c) => c.id)), Date.now());
+  const toName = toIdentifyNow(recent, new Set(clusters.filter((c) => c.label).map((c) => c.id)));
 
   return (
     <div className="flex flex-col gap-4">
