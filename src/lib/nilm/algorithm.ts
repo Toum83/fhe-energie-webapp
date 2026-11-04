@@ -145,6 +145,18 @@ export const PARAMS = {
    */
   dipWindowS: 150,
   dipRecoverRatio: 0.6,
+  /**
+   * Creux solaire : quand le soleil perce, la consommation FHE plonge d'autant que la production
+   * monte (03/11/2026, 14 h 38 → 15 h 12 : conso + production restent à ~2 170 W, production de 300
+   * à 1 500 W). Le chauffe-eau semble revenu à son niveau de départ alors qu'il chauffe jusqu'à
+   * 16 h 29 : sa session se fermait à 37 min (0,6 kWh au lieu de 3,5) et les à-coups fabriquaient de
+   * fausses sessions (PC Lenny, 0,85 kWh). Conso et production ne tombent pas sur le même relevé :
+   * on regarde l'amplitude de la production autour de l'arrêt, et la reprise qui le suit.
+   */
+  solarDipSwingW: 500,
+  solarDipSwingMin: 5,
+  solarDipRecoverMin: 15,
+  solarDipRecoverShare: 0.5,
   /** Plus petit échelon gardé (même seuil que l'automation HA de détection). */
   minStepW: 200,
 } as const;
@@ -234,6 +246,26 @@ export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
 }
 
 /**
+ * Retour au niveau merged[j] d'un gros appareil merged[i] : si c'est un creux solaire (voir
+ * PARAMS.solarDipSwingW), indice de l'événement où la puissance est revenue, sinon null. Tant que
+ * la fenêtre de reprise court, le doute profite à l'appareil : dernier indice, il tourne toujours.
+ */
+function solarDipEnd(merged: PowerEvent[], i: number, j: number, nowMs: number): number | null {
+  const on = merged[i];
+  const t = ts(merged[j].ts);
+  if (!isFine(merged[j].ts) || on.power_before == null) return null;
+  const near = merged.filter((e) => Math.abs(ts(e.ts) - t) <= PARAMS.solarDipSwingMin * 60000 && e.production_power != null);
+  const prods = near.map((e) => e.production_power!);
+  if (prods.length === 0 || Math.max(...prods) - Math.min(...prods) < PARAMS.solarDipSwingW) return null;
+  const floor = on.power_before + PARAMS.solarDipRecoverShare * on.delta_w;
+  const limit = t + PARAMS.solarDipRecoverMin * 60000;
+  for (let k = j + 1; k < merged.length && ts(merged[k].ts) <= limit; k++) {
+    if (merged[k].direction === "on" && (merged[k].power_after ?? 0) >= floor) return k;
+  }
+  return nowMs < limit ? merged.length - 1 : null;
+}
+
+/**
  * Apparie chaque ON avec le prochain OFF de magnitude la plus proche (pas le premier trouvé),
  * dans une fenêtre de 4 h. Retourne les sessions et le nombre d'événements non appariés.
  *
@@ -275,24 +307,41 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
   }
   const takenElsewhere = (j: number, i: number) => reservedBy.has(j) && reservedBy.get(j) !== i;
   const sessions: Session[] = [];
+  // À-coups d'un creux solaire : ni démarrages ni arrêts, personne ne les prend.
+  const solarNoise = new Set<number>();
   for (let i = 0; i < merged.length; i++) {
     const on = merged[i];
-    if (on.direction !== "on" || on.delta_w <= 0) continue;
+    if (on.direction !== "on" || on.delta_w <= 0 || solarNoise.has(i)) continue;
     let best: { err: number; j: number } | null = null;
     const byLevel = on.delta_w >= PARAMS.levelPairMinW && on.power_before != null;
     if (byLevel) {
       // Premier OFF qui ramène la puissance au niveau d'avant le démarrage.
       const ceiling = on.power_before! + Math.max(PARAMS.levelRelTol * on.delta_w, PARAMS.levelAbsTolW);
+      let dipFrom = -1;
+      let dipTo = -1;
       for (let j = i + 1; j < merged.length; j++) {
         const off = merged[j];
         if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
-        if (off.direction !== "off" || used.has(j) || takenElsewhere(j, i)) continue;
+        if (off.direction !== "off") continue;
+        const atLevel = off.power_after != null && off.power_after <= ceiling;
+        const back = atLevel ? solarDipEnd(merged, i, j, nowMs) : null;
+        if (back != null) {
+          if (dipFrom < 0) dipFrom = j;
+          dipTo = back;
+          j = back;
+          continue;
+        }
+        if (used.has(j) || takenElsewhere(j, i)) continue;
         // OFF partagé : il doit lui rester de quoi couper cet appareil aussi.
         if (remaining.has(j) && left(j) < (1 - PARAMS.levelRelTol) * on.delta_w) continue;
-        if (off.power_after != null && off.power_after <= ceiling) {
+        if (atLevel) {
           best = { err: 0, j };
           break;
         }
+      }
+      for (let k = dipFrom; dipFrom >= 0 && k <= dipTo; k++) {
+        solarNoise.add(k);
+        used.add(k);
       }
     }
     // Retour au niveau pas encore arrivé, fenêtre encore ouverte : l'appareil tourne toujours.
@@ -637,6 +686,64 @@ export function pulseTrainSessions(sessions: Session[]): Set<number> {
   return out;
 }
 
+/**
+ * Lave-linge : ses chauffes de ~2 kW ressemblent à celles du four et son essorage à un micro-onde.
+ * C'est l'enchaînement qui le trahit : des chauffes, puis, une demi-heure à deux heures plus tard,
+ * une série d'à-coups de moteur. Cas réel du 04/11/2026 : chauffes à 11 h 30, 11 h 44 et 12 h 38
+ * (cartes du four), essorage de 13 h 14 à 13 h 33, 8 à-coups de 500 à 1 100 W (carte du micro-onde).
+ */
+export const WASHER_CYCLE = {
+  labelPrefix: "Lave-linge · chauffe",
+  heatPowerW: [1650, 2700] as [number, number],
+  heatMinMin: 4,
+  heatMaxMin: 45,
+  spinPowerW: [450, 1300] as [number, number],
+  spinMaxMin: 1.5,
+  spinMaxGapMin: 6,
+  spinMinPulses: 5,
+  /** Fin de la dernière chauffe → début de l'essorage. */
+  leadMin: [20, 120] as [number, number],
+  /** Deux chauffes d'un même cycle sont à moins de ça l'une de l'autre. */
+  maxHeatGapMin: 75,
+} as const;
+
+/** Sessions d'un cycle de lave-linge : chauffes et à-coups d'essorage. */
+export function washerCycleSessions(sessions: Session[]): { heats: Set<number>; spins: Set<number> } {
+  const P = WASHER_CYCLE;
+  const heats = new Set<number>();
+  const spins = new Set<number>();
+  const inside = (w: number, [lo, hi]: [number, number]) => w >= lo && w <= hi;
+  const byStart = (a: number, b: number) => ts(sessions[a].start_ts) - ts(sessions[b].start_ts);
+  // À-coups d'essorage invisibles avant la courbe à 7 s.
+  const all = sessions.flatMap((s, i) => (s.end_ts && isFine(s.start_ts) ? [i] : []));
+  const heatIdx = all.filter((i) => inside(sessions[i].power_w, P.heatPowerW) && sessions[i].duration_min >= P.heatMinMin && sessions[i].duration_min <= P.heatMaxMin).sort(byStart);
+  const pulses = all.filter((i) => inside(sessions[i].power_w, P.spinPowerW) && sessions[i].duration_min <= P.spinMaxMin).sort(byStart);
+  const flush = (train: number[]) => {
+    if (train.length < P.spinMinPulses) return;
+    const a = ts(sessions[train[0]].start_ts);
+    const before = heatIdx.filter((i) => ts(sessions[i].end_ts) <= a);
+    const last = before.at(-1);
+    if (last == null) return;
+    const lead = (a - ts(sessions[last].end_ts)) / 60000;
+    if (lead < P.leadMin[0] || lead > P.leadMin[1]) return;
+    train.forEach((i) => spins.add(i));
+    let k = before.length - 1;
+    heats.add(before[k]);
+    while (k > 0 && ts(sessions[before[k]].start_ts) - ts(sessions[before[k - 1]].end_ts) <= P.maxHeatGapMin * 60000) heats.add(before[--k]);
+  };
+  let train: number[] = [];
+  for (const i of pulses) {
+    const prev = train.at(-1);
+    if (prev != null && ts(sessions[i].start_ts) - ts(sessions[prev].end_ts) > P.spinMaxGapMin * 60000) {
+      flush(train);
+      train = [];
+    }
+    train.push(i);
+  }
+  flush(train);
+  return { heats, spins };
+}
+
 /** Vrai si la session ne peut pas rejoindre ce cluster nommé (appareil éteint pendant la session). */
 function forbidden(s: Session, c: ExistingCluster, contexts: DeviceContext[]): boolean {
   const label = c.label ?? "";
@@ -669,10 +776,22 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
   const trains = pulseTrainSessions(sessions);
   const iron = named.find((c) => c.label!.startsWith(PULSE_TRAIN.labelPrefix));
   const trainOrphans: number[] = [];
+  // Cycle de lave-linge : chauffes à sa carte ; l'essorage ne va à aucune carte nommée (ses à-coups
+  // déplaceraient le centroïde de celle des chauffes et n'ont rien à faire au micro-onde).
+  const washer = washerCycleSessions(sessions);
+  const washerCard = named.find((c) => c.label!.startsWith(WASHER_CYCLE.labelPrefix));
   sessions.forEach((s, i) => {
     if (trains.has(i)) {
       if (iron) assignment[i] = `id:${iron.id}`;
       else trainOrphans.push(i);
+      return;
+    }
+    if (washer.spins.has(i)) {
+      orphans.push(i);
+      return;
+    }
+    if (washerCard && washer.heats.has(i)) {
+      assignment[i] = `id:${washerCard.id}`;
       return;
     }
     const f = feature(s.power_w, s.duration_min);

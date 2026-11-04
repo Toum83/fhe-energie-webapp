@@ -10,6 +10,7 @@ import {
   PARAMS,
   pulseTrainSessions,
   runPipeline,
+  washerCycleSessions,
   type Session,
   type ExistingCluster,
   type PowerEvent,
@@ -692,4 +693,91 @@ test("fer à repasser : la série va à sa carte, une impulsion isolée reste au
   const out = clusterSessions([lone, ...ironTrain()], existing).sessions;
   assert.equal(out[0].cluster_key, "id:50");
   assert.ok(out.slice(1).every((x) => x.cluster_key === "id:60"));
+});
+
+// Creux solaire du 03/11/2026 : conso qui plonge quand la production saute, chauffe-eau toujours en marche.
+function step(id: number, at: string, before: number, after: number, production: number): PowerEvent {
+  return {
+    id,
+    ts: `2026-11-03T${at}Z`,
+    delta_w: after - before,
+    power_before: before,
+    power_after: after,
+    direction: after > before ? "on" : "off",
+    production_power: production,
+  };
+}
+
+test("creux solaire : le chauffe-eau reste en marche, les à-coups ne font pas de sessions", () => {
+  const { sessions } = pairSessions(
+    [
+      step(1, "13:00:00", 400, 2100, 200),
+      step(2, "13:38:00", 2000, 800, 1300), // le soleil perce
+      step(3, "13:40:00", 800, 1100, 1200), // à-coup
+      step(4, "13:42:00", 1100, 1800, 400), // la puissance revient
+      step(5, "15:29:00", 2100, 350, 150), // vrai arrêt
+      step(6, "15:40:00", 350, 650, 150),
+      step(7, "15:50:00", 650, 350, 150),
+    ],
+    Date.parse("2026-11-03T18:00:00Z"),
+  );
+  assert.equal(sessions.length, 2);
+  assert.equal(sessions[0].end_ts, "2026-11-03T15:29:00Z");
+  assert.equal(sessions[1].on_event_id, 6);
+});
+
+const sunBreaks = [step(1, "13:00:00", 400, 2100, 200), step(2, "13:37:00", 2100, 2000, 300), step(3, "13:38:00", 2000, 500, 1300)];
+
+test("creux solaire : sans reprise, l'arrêt est un vrai arrêt", () => {
+  const { sessions } = pairSessions(sunBreaks, Date.parse("2026-11-03T18:00:00Z"));
+  assert.equal(sessions[0].end_ts, "2026-11-03T13:38:00Z");
+});
+
+test("creux solaire : pendant la fenêtre de reprise, l'appareil tourne toujours", () => {
+  assert.equal(pairSessions(sunBreaks, Date.parse("2026-11-03T13:45:00Z")).sessions.length, 0);
+});
+
+test("creux solaire : sans saut de production, le retour au niveau reste un arrêt", () => {
+  const { sessions } = pairSessions(
+    [step(1, "13:00:00", 400, 2100, 200), step(2, "13:38:00", 2000, 500, 250), step(3, "13:42:00", 500, 2300, 250), step(4, "13:50:00", 2300, 450, 250)],
+    Date.parse("2026-11-03T18:00:00Z"),
+  );
+  assert.equal(sessions[0].end_ts, "2026-11-03T13:38:00Z");
+});
+
+// Cycle du 04/11/2026 : secondes depuis le début du cycle.
+const NOV = 63 * 86400; // sess() part de septembre, la règle ne vaut que sur la courbe à 7 s
+const washerRun = (offsetS = NOV) => [
+  sess(offsetS, 9 * 60, 1996),
+  sess(offsetS + 14 * 60, 17 * 60, 2027),
+  sess(offsetS + 68 * 60, 5 * 60, 1857),
+  ...[104, 108, 110, 112, 115, 118, 122].map((m) => sess(offsetS + m * 60, 50, 800)),
+];
+
+test("lave-linge : chauffes puis essorage = un cycle", () => {
+  const { heats, spins } = washerCycleSessions(washerRun());
+  assert.deepEqual([...heats].sort(), [0, 1, 2]);
+  assert.equal(spins.size, 7);
+});
+
+test("lave-linge : pas d'essorage, ou trop tôt, ou sans chauffe = pas un cycle", () => {
+  assert.equal(washerCycleSessions(washerRun().slice(0, 3)).heats.size, 0);
+  assert.equal(washerCycleSessions(washerRun().slice(0, 7)).heats.size, 0); // 4 à-coups seulement
+  assert.equal(washerCycleSessions(washerRun().slice(3)).spins.size, 0);
+  const justAfter = [sess(NOV, 10 * 60, 2000), ...[12, 14, 16, 18, 20].map((m) => sess(NOV + m * 60, 50, 800))];
+  assert.equal(washerCycleSessions(justAfter).heats.size, 0); // four puis micro-onde, 2 min plus tard
+  assert.equal(washerCycleSessions(washerRun(0)).heats.size, 0); // avant la courbe à 7 s
+});
+
+test("lave-linge : les chauffes vont à sa carte, l'essorage quitte le micro-onde", () => {
+  const existing: ExistingCluster[] = [
+    { id: 12, label: "Four · pleine puissance", centroid_power_w: 2229, centroid_log_duration: Math.log(11) },
+    { id: 52, label: "Micro-onde · court", centroid_power_w: 930, centroid_log_duration: Math.log(1) },
+    { id: 55, label: "Lave-linge · chauffe", centroid_power_w: 1981, centroid_log_duration: Math.log(35) },
+  ];
+  const oven = sess(NOV - 6 * 3600, 11 * 60, 2229);
+  const out = clusterSessions([oven, ...washerRun()], existing).sessions;
+  assert.equal(out[0].cluster_key, "id:12");
+  assert.ok(out.slice(1, 4).every((x) => x.cluster_key === "id:55"));
+  assert.ok(out.slice(4).every((x) => x.cluster_key !== "id:52"));
 });
