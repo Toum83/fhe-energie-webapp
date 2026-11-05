@@ -245,6 +245,15 @@ export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
   return out;
 }
 
+/** Courbe à 7 s : la production a-t-elle bougé d'au moins solarDipSwingW autour de merged[j] ? */
+function solarSwingAt(merged: PowerEvent[], j: number): boolean {
+  const t = ts(merged[j].ts);
+  if (!isFine(merged[j].ts)) return false;
+  const near = merged.filter((e) => Math.abs(ts(e.ts) - t) <= PARAMS.solarDipSwingMin * 60000 && e.production_power != null);
+  const prods = near.map((e) => e.production_power!);
+  return prods.length > 0 && Math.max(...prods) - Math.min(...prods) >= PARAMS.solarDipSwingW;
+}
+
 /**
  * Retour au niveau merged[j] d'un gros appareil merged[i] : si c'est un creux solaire (voir
  * PARAMS.solarDipSwingW), indice de l'événement où la puissance est revenue, sinon null. Tant que
@@ -253,10 +262,7 @@ export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
 function solarDipEnd(merged: PowerEvent[], i: number, j: number, nowMs: number): number | null {
   const on = merged[i];
   const t = ts(merged[j].ts);
-  if (!isFine(merged[j].ts) || on.power_before == null) return null;
-  const near = merged.filter((e) => Math.abs(ts(e.ts) - t) <= PARAMS.solarDipSwingMin * 60000 && e.production_power != null);
-  const prods = near.map((e) => e.production_power!);
-  if (prods.length === 0 || Math.max(...prods) - Math.min(...prods) < PARAMS.solarDipSwingW) return null;
+  if (on.power_before == null || !solarSwingAt(merged, j)) return null;
   const floor = on.power_before + PARAMS.solarDipRecoverShare * on.delta_w;
   const limit = t + PARAMS.solarDipRecoverMin * 60000;
   for (let k = j + 1; k < merged.length && ts(merged[k].ts) <= limit; k++) {
@@ -307,6 +313,8 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
   }
   const takenElsewhere = (j: number, i: number) => reservedBy.has(j) && reservedBy.get(j) !== i;
   const sessions: Session[] = [];
+  const sessionEvents: [number, number][] = [];
+  const openBig: number[] = [];
   // À-coups d'un creux solaire : ni démarrages ni arrêts, personne ne les prend.
   const solarNoise = new Set<number>();
   for (let i = 0; i < merged.length; i++) {
@@ -345,7 +353,10 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
       }
     }
     // Retour au niveau pas encore arrivé, fenêtre encore ouverte : l'appareil tourne toujours.
-    if (!best && byLevel && nowMs - ts(on.ts) < PARAMS.pairWindowS * 1000) continue;
+    if (!best && byLevel && nowMs - ts(on.ts) < PARAMS.pairWindowS * 1000) {
+      openBig.push(ts(on.ts));
+      continue;
+    }
     // L'événement suivant est un OFF de même amplitude : rien d'autre n'a bougé, c'est le sien.
     // Cas réel des matins du 19 au 21/10/2026 : thermostat du sèche-serviettes en impulsions
     // d'1 min (~350 W) toutes les 5 min ; « la plus proche en magnitude » allait chercher un OFF
@@ -377,7 +388,11 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
     const off = merged[best.j];
     const offMag = left(best.j);
     // Par niveau, l'appareil ne consomme que son propre saut ; sinon le OFF est épuisé.
-    const rest = byLevel && best.err === 0 ? offMag - on.delta_w : 0;
+    // Sauf si l'écart vient du solaire : le 05/11/2026, chauffe-eau parti à +1 455 W avec 661 W de
+    // production, coupé à −1 761 W avec 206 W ; les 306 W restants ont fermé une fausse session de
+    // 297 W, comptée 0,55 kWh au PC.
+    const prodGap = isFine(off.ts) ? Math.abs((on.production_power ?? 0) - (off.production_power ?? 0)) : 0;
+    const rest = byLevel && best.err === 0 && offMag - on.delta_w > prodGap ? offMag - on.delta_w : 0;
     if (rest >= minStepAt(off.ts)) remaining.set(best.j, rest);
     else used.add(best.j);
     const durationMin = (ts(off.ts) - ts(on.ts)) / 60000;
@@ -389,6 +404,7 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
     // Un simple seuil de production (ex. > 50 W) comptait comme « solaire » un four de 1,7 kW
     // lancé au crépuscule avec 120 W de production : on mesure plutôt la part couverte.
     const coverage = (e: PowerEvent) => Math.min(Math.max(e.production_power ?? 0, 0) / Math.max(powerW, 1), 1);
+    sessionEvents.push([i, best.j]);
     sessions.push({
       on_event_id: on.id,
       off_event_id: offTaken.has(off.id) ? on.id : (offTaken.add(off.id), off.id),
@@ -400,10 +416,24 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
       pct_solar: Math.round(((coverage(on) + coverage(off)) / 2) * 100) / 100,
     });
   }
+  // Sous un gros appareil qui tourne, le passage des nuages fait monter et descendre la courbe par
+  // à-coups : un petit « appareil » né ou mort dans ces mouvements de production n'existe pas.
+  // Cas réel du 05/11/2026 : 14 h 40 → 15 h 49 à 304 W pendant la chauffe, compté au PC.
+  const hosts: [number, number][] = [
+    ...sessions.filter((s) => s.power_w >= PARAMS.levelPairMinW && s.duration_min >= PARAMS.revealMinMinutes).map((s): [number, number] => [ts(s.start_ts), ts(s.end_ts)]),
+    ...openBig.map((t): [number, number] => [t, nowMs]),
+  ];
+  const kept = sessions.filter((s, n) => {
+    if (s.power_w >= PARAMS.levelPairMinW) return true;
+    const [from, to] = [ts(s.start_ts), ts(s.end_ts)];
+    if (!hosts.some(([a, b]) => a < from && to <= b)) return true;
+    const [i, j] = sessionEvents[n];
+    return !(solarSwingAt(merged, i) || solarSwingAt(merged, j));
+  });
   const onCount = merged.filter((e) => e.direction === "on").length;
   const offCount = merged.filter((e) => e.direction === "off").length;
-  const unpaired = onCount - sessions.length + (offCount - sessions.length);
-  return { sessions, unpaired };
+  const unpaired = onCount - kept.length + (offCount - kept.length);
+  return { sessions: kept, unpaired };
 }
 
 /**
@@ -418,6 +448,9 @@ export function revealedPowerW(merged: PowerEvent[], i: number, j: number): numb
     const e = merged[k];
     if ((ts(e.ts) - ts(on.ts)) / 60000 > PARAMS.revealWindowMin) break;
     if (e.direction !== "off" || e.power_after == null) continue;
+    // Baisse due au soleil, pas à un appareil qui s'arrête : le 05/11/2026 à 14 h 02, elle a
+    // « révélé » 1 016 W et sorti le chauffe-eau de sa carte.
+    if (solarSwingAt(merged, k) || (isFine(e.ts) && Math.abs((e.production_power ?? 0) - (on.production_power ?? 0)) >= PARAMS.solarDipSwingW)) continue;
     const excess = e.power_after - on.power_before;
     if (excess >= PARAMS.revealMinRatio * on.delta_w && excess <= PARAMS.revealMaxRatio * on.delta_w) return excess;
   }

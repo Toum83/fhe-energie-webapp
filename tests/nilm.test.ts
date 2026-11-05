@@ -726,6 +726,23 @@ test("creux solaire : le chauffe-eau reste en marche, les à-coups ne font pas d
   assert.equal(sessions[1].on_event_id, 6);
 });
 
+test("soleil sous le chauffe-eau : sa puissance reste celle du départ, les à-coups ne font pas d'appareil", () => {
+  const { sessions } = pairSessions(
+    [
+      step(1, "13:00:00", 150, 1600, 660),
+      step(2, "13:02:00", 1400, 900, 1500), // le soleil perce : aucun appareil ne s'arrête
+      step(3, "13:40:00", 1000, 1300, 1250),
+      step(4, "13:41:00", 1300, 1290, 600),
+      step(5, "14:10:00", 1290, 990, 1000),
+      step(6, "15:30:00", 2040, 280, 200), // vrai arrêt, plus fort que le départ : moins de solaire
+    ],
+    Date.parse("2026-11-03T18:00:00Z"),
+  );
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].power_w, 1450);
+  assert.equal(sessions[0].end_ts, "2026-11-03T15:30:00Z");
+});
+
 const sunBreaks = [step(1, "13:00:00", 400, 2100, 200), step(2, "13:37:00", 2100, 2000, 300), step(3, "13:38:00", 2000, 500, 1300)];
 
 test("creux solaire : sans reprise, l'arrêt est un vrai arrêt", () => {
