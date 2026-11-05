@@ -324,7 +324,10 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
     const byLevel = on.delta_w >= PARAMS.levelPairMinW && on.power_before != null;
     if (byLevel) {
       // Premier OFF qui ramène la puissance au niveau d'avant le démarrage.
-      const ceiling = on.power_before! + Math.max(PARAMS.levelRelTol * on.delta_w, PARAMS.levelAbsTolW);
+      // Plancher à 0 : les prises déduites peuvent rendre le niveau négatif. Le 04/11/2026 (−308 W),
+      // le retour à 243 W à 16 h 35 n'a pas été reconnu : 2 min d'appareil sont devenues 100 min de
+      // chauffe-eau, 3,5 kWh comptés à 18 h.
+      const ceiling = Math.max(on.power_before!, 0) + Math.max(PARAMS.levelRelTol * on.delta_w, PARAMS.levelAbsTolW);
       let dipFrom = -1;
       let dipTo = -1;
       for (let j = i + 1; j < merged.length; j++) {

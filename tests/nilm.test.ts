@@ -743,6 +743,14 @@ test("soleil sous le chauffe-eau : sa puissance reste celle du départ, les à-c
   assert.equal(sessions[0].end_ts, "2026-11-03T15:30:00Z");
 });
 
+test("niveau négatif après déduction des prises : le retour au niveau reste reconnu", () => {
+  const { sessions } = pairSessions(
+    [step(1, "15:33:33", -308, 1763, 120), step(2, "15:35:18", 1746, 243, 120), step(3, "17:14:07", 885, 191, 0)],
+    Date.parse("2026-11-03T20:00:00Z"),
+  );
+  assert.equal(sessions[0].end_ts, "2026-11-03T15:35:18Z");
+});
+
 const sunBreaks = [step(1, "13:00:00", 400, 2100, 200), step(2, "13:37:00", 2100, 2000, 300), step(3, "13:38:00", 2000, 500, 1300)];
 
 test("creux solaire : sans reprise, l'arrêt est un vrai arrêt", () => {
