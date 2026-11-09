@@ -36,8 +36,11 @@ export function weekFacts({ report: r, previous: p, devices, measured, baseW, ga
     ...r.days.map((d) => `- ${weekday(d.date)} ${d.date} : ${f1(d.production_kwh)} / ${f1(d.consumption_kwh)}`),
   ];
   if (devices.length || measured.length) {
-    lines.push("Consommation par appareil (estimation basse par signature, sauf « mesuré par prise ») :");
-    for (const m of measured) lines.push(`- ${m.label} : ${f1(m.kwh)} kWh, mesuré par prise${m.complete ? "" : ` depuis le ${m.since}`}`);
+    lines.push("Consommation par appareil (estimation basse par signature, sauf « mesuré par prise » et « relevé corrigé ») :");
+    for (const m of measured) {
+      const how = m.source === "ha" ? "relevé corrigé à la main" : "mesuré par prise";
+      lines.push(`- ${m.label} : ${f1(m.kwh)} kWh, ${how}${m.complete ? "" : ` depuis le ${m.since}`}`);
+    }
     for (const d of devices) {
       const solar = d.solar_share == null ? "" : `, ~${Math.round(d.solar_share * 100)} % couvert par le solaire`;
       lines.push(`- ${d.label} : ${f1(d.energy_kwh)} kWh, ${d.sessions} utilisation${d.sessions > 1 ? "s" : ""}${solar}`);

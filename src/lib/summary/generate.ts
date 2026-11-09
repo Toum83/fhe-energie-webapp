@@ -25,7 +25,7 @@ précédente, meilleur et pire jour, appareils qui pèsent le plus, gaz), puis t
 concret et faisable la semaine suivante, par exemple décaler un appareil vers les heures de soleil.
 
 N'utilise que les chiffres fournis, arrondis, sans en inventer ni en recalculer de nouveaux. Les
-kWh par appareil sont des estimations basses, sauf ceux « mesuré par prise ». Si une donnée manque,
+kWh par appareil sont des estimations basses, sauf ceux « mesuré par prise » ou « relevé corrigé ». Si une donnée manque,
 n'en parle pas.`;
 
 function paris(d: Date) {

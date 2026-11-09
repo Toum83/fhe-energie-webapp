@@ -557,6 +557,18 @@ test("prises : kWh mesurés sommés sur les jours demandés, NILM remplacé seul
   assert.deepEqual(measuredDevices(rows, ["2026-10-25"]), []);
 });
 
+test("compteurs HA corrigés : remplacent le NILM seulement s'ils couvrent toute la période", async () => {
+  const { measuredDevices, withoutMeasured } = await import("../src/lib/nilm/measured.ts");
+  const rows = [
+    { day: "2026-11-07", measured: { ha_chauffe_eau_haut: 3.78, ha_thermodynamique: 2.08 } },
+    { day: "2026-11-08", measured: { ha_chauffe_eau_haut: 4.25 } },
+  ];
+  const m = measuredDevices(rows, ["2026-11-07", "2026-11-08"]);
+  assert.deepEqual(m.map((d) => [d.key, d.kwh, d.source, d.complete]), [["ha_chauffe_eau_haut", 8.03, "ha", true]]);
+  const groups = [{ label: "Chauffe-eau en haut" }, { label: "Chauffe-eau thermodynamique" }, { label: "Lave-linge" }];
+  assert.deepEqual(withoutMeasured(groups, m).map((g) => g.label), ["Chauffe-eau thermodynamique", "Lave-linge"]);
+});
+
 test("doublon : deux sessions d'une même carte qui se recouvrent, on garde la plus proche de la signature", () => {
   const iso = (s: string) => new Date(s).toISOString();
   // Thermodynamique du 21/10/2026 : deux appariements croisés pour un seul appareil.

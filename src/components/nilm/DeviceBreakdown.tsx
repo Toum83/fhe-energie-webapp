@@ -90,7 +90,7 @@ export function DeviceBreakdown({
                 <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
                   <span aria-hidden>{m.icon}</span>
                   <span className="truncate">{m.label}</span>
-                  <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-normal text-muted">mesuré</span>
+                  <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-normal text-muted">{m.source === "ha" ? "corrigé" : "mesuré"}</span>
                 </span>
                 <span className="num shrink-0 text-base">{nf.format(m.kwh)} kWh</span>
               </div>
@@ -101,7 +101,8 @@ export function DeviceBreakdown({
                 />
               </div>
               <p className="mt-1.5 text-xs tabular-nums text-muted">
-                prise connectée{m.complete ? "" : `, depuis le ${dayLabel(m.since)}`}
+                {m.source === "ha" ? "compteur Home Assistant, corrigé à la main" : "prise connectée"}
+                {m.complete ? "" : `, depuis le ${dayLabel(m.since)}`}
                 {share != null ? ` · ${share} % de la conso ${coverage.partial ? "des jours couverts" : "de la semaine"}` : ""}
               </p>
             </li>
@@ -141,8 +142,9 @@ export function DeviceBreakdown({
       <p className="mt-4 text-xs leading-relaxed text-faint">
         Estimations basses : seules les utilisations reconnues par leur signature sont comptées. Les appareils non nommés,
         les petits appareils et la pompe à chaleur du thermodynamique restent dans « Reste ». Le fond permanent est la
-        puissance qui ne descend jamais, même la nuit. Les lignes « mesuré » viennent d’une prise connectée et
-        remplacent l’estimation de l’appareil. Nommer un appareil dans
+        puissance qui ne descend jamais, même la nuit. Les lignes « mesuré » viennent d’une prise connectée, les lignes
+        « corrigé » du compteur Home Assistant complété à la main (trou de données, relevé de l’écran du
+        thermodynamique) : elles remplacent l’estimation de l’appareil. Nommer un appareil dans
         Appareils complète aussi les semaines passées ; un nom « Famille · détail » (ex. « Cuisine · Bouilloire & four »)
         additionne les cartes de la même famille.
       </p>
