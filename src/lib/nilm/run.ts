@@ -1,6 +1,6 @@
 import "server-only";
-import { deviceContexts, mergeEvents, pairSessions, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type RunningSession } from "./algorithm";
-import { fetchClusters, fetchDeviceStates, fetchEvents, saveClustering } from "./db";
+import { deviceContexts, housePowerNow, mergeEvents, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type RunningSession } from "./algorithm";
+import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
 export async function runClustering(housePowerW: number | null = null) {
@@ -24,7 +24,15 @@ export async function runClustering(housePowerW: number | null = null) {
     .map((d) => Number(states.filter((s) => s.device === d).at(-1)?.state))
     .filter(Number.isFinite)
     .reduce((a, w) => a + w, 0);
-  const houseW = housePowerW == null ? null : Math.max(housePowerW - plugsNow, 0);
+  // Depuis fhe_solar 0.6.0 les échelons sont ceux de la maison (soutirage + production) : la
+  // puissance actuelle doit l'être aussi, or HA n'envoie que le soutirage. On la relit dans la
+  // courbe archivée ; en injection ou sans courbe récente, elle est inconnue (puissance nominale).
+  let house = housePowerW;
+  if (PARAMS.houseSignalSince && now >= Date.parse(PARAMS.houseSignalSince)) {
+    const curve = await fetchCurve(new Date(now - 6 * 60000).toISOString()).catch(() => null);
+    house = housePowerNow(curve ?? [], now);
+  }
+  const houseW = house == null ? null : Math.max(house - plugsNow, 0);
   const named = existing
     .filter((c) => c.label && c.label.trim())
     .map((c) => ({

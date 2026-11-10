@@ -569,6 +569,19 @@ test("compteurs HA corrigés : remplacent le NILM seulement s'ils couvrent toute
   assert.deepEqual(withoutMeasured(groups, m).map((g) => g.label), ["Chauffe-eau thermodynamique", "Lave-linge"]);
 });
 
+test("puissance maison actuelle : soutirage + production, inconnue en injection ou sans courbe récente", async () => {
+  const { housePowerNow, effectiveProductionW } = await import("../src/lib/nilm/algorithm.ts");
+  const t = Date.parse("2026-11-10T13:00:00Z");
+  const pts = (rows: [number, number | null][]): [number, number, number | null][] => rows.map(([c, p], i) => [t - (rows.length - 1 - i) * 7000, c, p]);
+  assert.equal(housePowerNow(pts([[1900, 0], [1905, 0]]), t), 1905);
+  assert.equal(Math.round(housePowerNow(pts([[1300, 900], [1100, 1100]]), t)!), Math.round(1100 + effectiveProductionW(1100)));
+  assert.equal(effectiveProductionW(120), 0, "plancher de la pince production");
+  assert.equal(housePowerNow(pts([[279, 400], [279, 450], [279, 500], [279, 520]]), t), null, "conso figée sous production : injection");
+  assert.equal(housePowerNow(pts([[250, 0], [250, 0], [250, 0], [250, 0]]), t), 250, "valeurs identiques la nuit : pas un gel");
+  assert.equal(housePowerNow(pts([[1900, 0]]), t + 6 * 60000), null, "courbe trop vieille");
+  assert.equal(housePowerNow([], t), null);
+});
+
 test("doublon : deux sessions d'une même carte qui se recouvrent, on garde la plus proche de la signature", () => {
   const iso = (s: string) => new Date(s).toISOString();
   // Thermodynamique du 21/10/2026 : deux appariements croisés pour un seul appareil.

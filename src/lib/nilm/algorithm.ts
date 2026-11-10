@@ -138,6 +138,19 @@ export const PARAMS = {
   reuseRadius: 1,
   timeZone: "Europe/Paris",
   /**
+   * Passage de fhe_solar aux échelons de la puissance MAISON (0.6.0). La pince « Consommation » de
+   * FHE mesure le soutirage (maison − production) : constaté le 10/11/2026, pente Δconso/Δprod de
+   * −0,96 à −0,99, et conso inférieure à la prise du lave-vaisselle seule au soleil. Depuis cette
+   * date, power_before / power_after / delta_w des événements sont ceux de la maison reconstruite
+   * (soutirage + production, niveau maintenu pendant l'injection). Rejeu du 02 au 10/11/2026 :
+   * petites séances de 10 h à 17 h les jours de soleil 42 → 23 (7,5 → 3,4 kWh), échelons non
+   * appariés 437 → 358, et les règles de creux solaire ci-dessous n'ont plus aucun effet (elles
+   * restent pour les événements d'avant). null tant que la 0.6.0 n'est pas installée.
+   */
+  houseSignalSince: null as string | null,
+  /** Lecture de la pince « Production » sans puissance réelle (onduleur sous tension), retirée en quadrature. */
+  prodFloorW: 120,
+  /**
    * Creux d'un seul relevé : un OFF aussitôt suivi (<= 150 s) d'un ON qui reprend au moins 60 % de
    * la baisse n'est pas un arrêt. Apparu avec le relevé à la minute (10/10/2026) : le chauffe-eau
    * a plongé 1 min à 13 h 02 (1 376 -> 947 W) puis est remonté ; ce faux « retour au niveau »
@@ -985,6 +998,25 @@ export const RUNNING = {
  * `watts` : puissance actuellement attribuée à l'appareil ; `elapsed_min` : minutes depuis le
  * démarrage (plafonnées), pour le rattrapage au tout premier relevé.
  */
+/** Production réelle estimée (même formule que steps.py de fhe_solar : plancher retiré en quadrature). */
+export function effectiveProductionW(watts: number): number {
+  return Math.sqrt(Math.max(watts * watts - PARAMS.prodFloorW * PARAMS.prodFloorW, 0));
+}
+
+/**
+ * Puissance actuelle de la maison d'après les derniers points de la courbe FHE à 7 s
+ * ([ms, soutirage W, production W]) : soutirage + production. null si la courbe est trop vieille
+ * ou si la maison injecte (conso figée sous production : sa puissance est alors inconnue).
+ */
+export function housePowerNow(points: [number, number, number | null][], nowMs: number, maxAgeS = 300): number | null {
+  const last = points.at(-1);
+  if (!last || nowMs - last[0] > maxAgeS * 1000) return null;
+  const prod = effectiveProductionW(last[2] ?? 0);
+  const tail = points.slice(-4);
+  if (prod > 0 && tail.length === 4 && tail.every((p) => p[1] === last[1])) return null;
+  return last[1] + prod;
+}
+
 export type RunningSession = { on_event_id: number; cluster_id: number; watts: number; elapsed_min: number };
 
 /**
