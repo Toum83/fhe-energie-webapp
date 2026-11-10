@@ -1,14 +1,15 @@
 import "server-only";
-import { deviceContexts, housePowerNow, mergeEvents, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type RunningSession } from "./algorithm";
+import { deviceContexts, housePowerNow, mergeEvents, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
 import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, insertDeviceState, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
 export async function runClustering(housePowerW: number | null = null) {
-  const [events, existing, states] = await Promise.all([
+  const [events, existing, loaded] = await Promise.all([
     fetchEvents(),
     fetchClusters(),
     fetchDeviceStates().catch(() => []), // fonction SQL pas encore installée : pas de contexte
   ]);
+  const states: DeviceState[] = [...loaded];
   const now = Date.now();
   // Lave-linge reconnu à son tambour dans les 6 dernières heures de courbe : ses périodes de
   // marche sont enregistrées comme celles d'un appareil suivi (device_states), une seule fois.
