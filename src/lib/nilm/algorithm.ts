@@ -145,9 +145,9 @@ export const PARAMS = {
    * (soutirage + production, niveau maintenu pendant l'injection). Rejeu du 02 au 10/11/2026 :
    * petites séances de 10 h à 17 h les jours de soleil 42 → 23 (7,5 → 3,4 kWh), échelons non
    * appariés 437 → 358, et les règles de creux solaire ci-dessous n'ont plus aucun effet (elles
-   * restent pour les événements d'avant). null tant que la 0.6.0 n'est pas installée.
+   * restent pour les événements d'avant). Installée le 10/11/2026 à 22 h 53 (redémarrage de HA).
    */
-  houseSignalSince: null as string | null,
+  houseSignalSince: "2026-11-10T21:53:00Z" as string | null,
   /** Lecture de la pince « Production » sans puissance réelle (onduleur sous tension), retirée en quadrature. */
   prodFloorW: 120,
   /**
