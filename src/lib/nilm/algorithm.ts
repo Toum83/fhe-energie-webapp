@@ -756,6 +756,93 @@ export const WASHER_CYCLE = {
   maxHeatGapMin: 75,
 } as const;
 
+/**
+ * Lave-linge reconnu à son tambour sur la courbe à 7 s : pendant tout un cycle, la puissance de
+ * la maison bouge de ~100 W d'un relevé au suivant (brassage, inversions de sens), ce qu'aucun
+ * autre appareil de la maison ne fait aussi longtemps. Cycle du 04/11/2026 (11 h 26 → 13 h 33) :
+ * 77 à 93 % des écarts entre relevés voisins dans 25–400 W, médiane 80–135 W, contre 0–10 % au
+ * repos et 20–58 % pendant un lave-vaisselle. Balayage du 01 au 10/11/2026 : ce cycle d'un bloc
+ * (11 h 25 → 13 h 25) et aucune autre période, jours de soleil compris. Validé sur ce seul cycle.
+ */
+export const WASHER_DRUM = {
+  device: "lave_linge",
+  blockMin: 5,
+  /** Tranche « agitée » : assez de relevés, part d'écarts de 25 à 400 W, écart médian. */
+  minPairs: 20,
+  deltaW: [25, 400] as [number, number],
+  minShare: 0.7,
+  minMedianW: 50,
+  /** Tranches calmes tolérées dans un cycle (trempage, vidange). */
+  maxGapBlocks: 3,
+  /** En dessous, ce n'est pas un cycle (une tranche agitée isolée arrive : 04/11, 16 h 10). */
+  minHotBlocks: 6,
+  /** Le brassage ne démarre qu'après le remplissage : le cycle commence une tranche plus tôt. */
+  leadBlocks: 1,
+} as const;
+
+export type WasherWindow = { start: number; end: number; hotBlocks: number };
+
+/**
+ * Cycles de lave-linge dans une courbe [ms, soutirage W, production W] (triée). `end` est la fin
+ * de la dernière tranche agitée : un cycle est clos quand la courbe dépasse cette fin de plus de
+ * `maxGapBlocks` tranches.
+ */
+export function washerWindows(points: [number, number, number | null][]): WasherWindow[] {
+  const P = WASHER_DRUM;
+  const blockMs = P.blockMin * 60000;
+  const blocks = new Map<number, number[]>();
+  for (let i = 1; i < points.length; i++) {
+    const [t0, c0, p0] = points[i - 1];
+    const [t1, c1, p1] = points[i];
+    if (t1 - t0 > 15000) continue;
+    const d = Math.abs(c1 + effectiveProductionW(p1 ?? 0) - c0 - effectiveProductionW(p0 ?? 0));
+    const k = Math.floor(t1 / blockMs);
+    const list = blocks.get(k);
+    if (list) list.push(d);
+    else blocks.set(k, [d]);
+  }
+  const hot = [...blocks]
+    .filter(([, d]) => d.length >= P.minPairs && d.filter((x) => x >= P.deltaW[0] && x <= P.deltaW[1]).length / d.length >= P.minShare && median(d) >= P.minMedianW)
+    .map(([k]) => k)
+    .sort((a, b) => a - b);
+  const out: WasherWindow[] = [];
+  let first = -1, prev = -1, count = 0;
+  const flush = () => {
+    if (count >= P.minHotBlocks) out.push({ start: (first - P.leadBlocks) * blockMs, end: (prev + 1) * blockMs, hotBlocks: count });
+  };
+  for (const k of hot) {
+    if (first >= 0 && k - prev - 1 > P.maxGapBlocks) {
+      flush();
+      first = -1;
+    }
+    if (first < 0) { first = k; count = 0; }
+    prev = k;
+    count++;
+  }
+  if (first >= 0) flush();
+  return out;
+}
+
+/**
+ * États « on » / « off » du lave-linge à ajouter à device_states pour ces cycles, sans doublon
+ * avec ceux déjà enregistrés (un « on » à ±15 min du début). Le « off » n'est émis qu'une fois le
+ * cycle clos ; d'ici là l'état reste « on », ce que deviceContexts prolonge jusqu'à maintenant.
+ */
+export function washerStates(windows: WasherWindow[], existing: DeviceState[], lastPointMs: number): DeviceState[] {
+  const P = WASHER_DRUM;
+  const mine = existing.filter((s) => s.device === P.device);
+  const near = (state: string, t: number) => mine.some((s) => s.state === state && Math.abs(ts(s.ts) - t) <= 15 * 60000);
+  const out: DeviceState[] = [];
+  for (const w of windows) {
+    if (!near("on", w.start)) out.push({ device: P.device, ts: new Date(w.start).toISOString(), state: "on" });
+    const closed = lastPointMs - w.end > P.maxGapBlocks * P.blockMin * 60000;
+    if (closed && !mine.some((s) => s.state === "off" && ts(s.ts) >= w.end - 60000 && ts(s.ts) <= w.end + 15 * 60000)) {
+      out.push({ device: P.device, ts: new Date(w.end).toISOString(), state: "off" });
+    }
+  }
+  return out;
+}
+
 /** Sessions d'un cycle de lave-linge : chauffes et à-coups d'essorage. */
 export function washerCycleSessions(sessions: Session[]): { heats: Set<number>; spins: Set<number> } {
   const P = WASHER_CYCLE;

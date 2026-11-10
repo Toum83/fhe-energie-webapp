@@ -582,6 +582,39 @@ test("puissance maison actuelle : soutirage + production, inconnue en injection 
   assert.equal(housePowerNow([], t), null);
 });
 
+test("lave-linge : cycle reconnu à l'agitation du tambour, états on/off émis une seule fois", async () => {
+  const { washerWindows, washerStates } = await import("../src/lib/nilm/algorithm.ts");
+  const t0 = Date.parse("2026-11-04T09:00:00Z");
+  const pts: [number, number, number | null][] = [];
+  // 1 h 30 calme (±5 W), 1 h 30 de brassage (±110 W d'un relevé à l'autre) avec 10 min de
+  // trempage calme au milieu, puis 40 min calmes. Un point toutes les 7 s.
+  for (let i = 0; i * 7000 < 220 * 60000; i++) {
+    const min = (i * 7) / 60;
+    const drum = min >= 90 && min < 180 && !(min >= 130 && min < 140);
+    pts.push([t0 + i * 7000, 400 + (drum ? (i % 2 ? 110 : 0) : i % 2 ? 5 : 0), 0]);
+  }
+  const w = washerWindows(pts);
+  assert.equal(w.length, 1);
+  assert.equal(new Date(w[0].start).toISOString(), "2026-11-04T10:25:00.000Z", "une tranche avant le début du brassage");
+  assert.equal(new Date(w[0].end).toISOString(), "2026-11-04T12:00:00.000Z");
+  const last = pts[pts.length - 1][0];
+  const states = washerStates(w, [], last);
+  assert.deepEqual(states.map((s) => [s.device, s.state, s.ts]), [
+    ["lave_linge", "on", "2026-11-04T10:25:00.000Z"],
+    ["lave_linge", "off", "2026-11-04T12:00:00.000Z"],
+  ]);
+  assert.deepEqual(washerStates(w, states, last), [], "déjà enregistrés : rien à ajouter");
+  // En cours de cycle : « on » dès 30 min de brassage, pas encore de « off ».
+  const partial = pts.filter((p) => p[0] <= t0 + 125 * 60000);
+  const live = washerStates(washerWindows(partial), [], partial[partial.length - 1][0]);
+  assert.deepEqual(live.map((s) => s.state), ["on"]);
+  // Moins de 30 min d'agitation (une chauffe de four qui régule, un aspirateur) : pas un cycle.
+  assert.deepEqual(washerWindows(pts.filter((p) => p[0] <= t0 + 110 * 60000)), []);
+  // Soleil qui varie sans brassage : la production compense le soutirage, pas d'agitation.
+  const sun = pts.map(([t], i): [number, number, number | null] => [t, 1500 - (i % 2 ? 300 : 0), 900 + (i % 2 ? 300 : 0)]);
+  assert.deepEqual(washerWindows(sun), []);
+});
+
 test("doublon : deux sessions d'une même carte qui se recouvrent, on garde la plus proche de la signature", () => {
   const iso = (s: string) => new Date(s).toISOString();
   // Thermodynamique du 21/10/2026 : deux appariements croisés pour un seul appareil.

@@ -1,6 +1,6 @@
 import "server-only";
-import { deviceContexts, housePowerNow, mergeEvents, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type RunningSession } from "./algorithm";
-import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, saveClustering } from "./db";
+import { deviceContexts, housePowerNow, mergeEvents, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type RunningSession } from "./algorithm";
+import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, insertDeviceState, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
 export async function runClustering(housePowerW: number | null = null) {
@@ -10,6 +10,19 @@ export async function runClustering(housePowerW: number | null = null) {
     fetchDeviceStates().catch(() => []), // fonction SQL pas encore installée : pas de contexte
   ]);
   const now = Date.now();
+  // Lave-linge reconnu à son tambour dans les 6 dernières heures de courbe : ses périodes de
+  // marche sont enregistrées comme celles d'un appareil suivi (device_states), une seule fois.
+  const curve = (await fetchCurve(new Date(now - 6 * 3600000).toISOString()).catch(() => null)) ?? [];
+  if (curve.length) {
+    for (const st of washerStates(washerWindows(curve), states, curve[curve.length - 1][0])) {
+      try {
+        await insertDeviceState(st);
+        states.push(st);
+      } catch {
+        // pas enregistré : sera retenté au prochain passage
+      }
+    }
+  }
   const contexts = deviceContexts(states, now);
   const result = runPipeline(events, existing, now, contexts, states);
   const saved = await saveClustering({
@@ -29,8 +42,7 @@ export async function runClustering(housePowerW: number | null = null) {
   // courbe archivée ; en injection ou sans courbe récente, elle est inconnue (puissance nominale).
   let house = housePowerW;
   if (PARAMS.houseSignalSince && now >= Date.parse(PARAMS.houseSignalSince)) {
-    const curve = await fetchCurve(new Date(now - 6 * 60000).toISOString()).catch(() => null);
-    house = housePowerNow(curve ?? [], now);
+    house = housePowerNow(curve, now);
   }
   const houseW = house == null ? null : Math.max(house - plugsNow, 0);
   const named = existing

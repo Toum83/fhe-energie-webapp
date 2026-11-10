@@ -52,6 +52,8 @@ export const fetchClusters = () => rpc<StoredCluster[]>("nilm_get_clusters", {})
 export const fetchDeviceStates = async () => (await rpc<import("./algorithm").DeviceState[] | null>("nilm_get_device_states", {})) ?? [];
 /** Derniers points de la courbe FHE à 7 s archivée : [ms, soutirage W, production W]. */
 export const fetchCurve = (sinceIso: string) => rpc<[number, number, number | null][] | null>("nilm_get_curve", { since: sinceIso });
+/** État d'un appareil (même fonction SQL que les événements : payload avec `device`). */
+export const insertDeviceState = (state: import("./algorithm").DeviceState) => rpc<null>("insert_power_event", { payload: state });
 export const saveClustering = (payload: unknown) => rpc<{ clusters: number; sessions: number }>("nilm_save_clustering", { payload });
 export const setLabel = (clusterId: number, label: string, icon: string | null) =>
   rpc<null>("nilm_set_label", { cluster_id: clusterId, new_label: label, new_icon: icon });
