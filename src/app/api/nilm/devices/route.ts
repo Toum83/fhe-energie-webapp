@@ -2,6 +2,10 @@ import { isAdmin } from "@/lib/nilm/auth";
 import { dbConfigured, fetchDeviceTotals } from "@/lib/nilm/db";
 import { runClustering } from "@/lib/nilm/run";
 import { THERMO_DEFAULT, thermoDefaultKwh } from "@/lib/nilm/measured";
+import { MORNING_TOWEL } from "@/lib/nilm/algorithm";
+
+/** Carte dont le capteur HA reçoit aussi le programme du matin du sèche-serviettes (pas de capteur HA à lui). */
+const TOWEL_HA_LABEL = "Sèche-serviettes SdB · cycles thermostat";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +28,10 @@ export async function GET(request: Request) {
       d.cluster_id === THERMO_DEFAULT.clusterId ? { ...d, total_kwh: Math.round((Number(d.total_kwh) + extra) * 1000) / 1000 } : d,
     );
     const by_id = Object.fromEntries(devices.map((d) => [String(d.cluster_id), Number(d.total_kwh)]));
+    // Le programme du matin du sèche-serviettes s'ajoute au capteur HA de la même famille.
+    const towel = devices.find((d) => d.label.startsWith(MORNING_TOWEL.labelPrefix));
+    const host = devices.find((d) => d.label === TOWEL_HA_LABEL);
+    if (towel && host) by_id[String(host.cluster_id)] = Math.round((Number(host.total_kwh) + Number(towel.total_kwh)) * 1000) / 1000;
     return Response.json({ devices, by_id });
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : "erreur" }, { status: 500 });

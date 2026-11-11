@@ -907,11 +907,34 @@ export function washerCycleSessions(sessions: Session[]): { heats: Set<number>; 
   return { heats, spins };
 }
 
+/**
+ * Sèche-serviettes de la salle de bain sur son programme du matin (confirmé par l'utilisateur le
+ * 11/11/2026) : un bloc de 350 à 450 W de 40 à 60 min qui démarre entre 6 h 00 et 6 h 30
+ * (04, 06, 09, 10/11/2026). Sa signature est celle d'autres appareils en journée (compresseur du
+ * thermodynamique à midi, dans la même carte) : seule l'heure du programme le distingue. Exception
+ * assumée au principe « l'heure n'est jamais une caractéristique » : c'est une règle nommée, pas
+ * le regroupement. La carte de ce nom ne prend rien d'autre.
+ */
+export const MORNING_TOWEL = {
+  labelPrefix: "Sèche-serviettes SdB · programme du matin",
+  startMinute: [5 * 60 + 30, 6 * 60 + 45] as [number, number],
+  powerW: [250, 600] as [number, number],
+  durationMin: [15, 90] as [number, number],
+} as const;
+
+export function isMorningTowel(s: Session): boolean {
+  const P = MORNING_TOWEL;
+  const m = localMinute(s.start_ts);
+  return m >= P.startMinute[0] && m <= P.startMinute[1] && s.power_w >= P.powerW[0] && s.power_w <= P.powerW[1] && s.duration_min >= P.durationMin[0] && s.duration_min <= P.durationMin[1];
+}
+
 /** Vrai si la session ne peut pas rejoindre ce cluster nommé (appareil éteint pendant la session). */
 function forbidden(s: Session, c: ExistingCluster, contexts: DeviceContext[]): boolean {
   const label = c.label ?? "";
   // Le fer ne prend que des séries d'impulsions (voir clusterSessions), jamais une impulsion isolée.
   if (label.startsWith(PULSE_TRAIN.labelPrefix)) return true;
+  // Idem pour le programme du matin du sèche-serviettes : attribué par sa règle horaire seulement.
+  if (label.startsWith(MORNING_TOWEL.labelPrefix)) return true;
   return contexts.some((ctx) => {
     if (s.end_ts < ctx.since) return false; // session finie avant le début du suivi
     const share = onShare(s, ctx);
@@ -943,7 +966,12 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
   // déplaceraient le centroïde de celle des chauffes et n'ont rien à faire au micro-onde).
   const washer = washerCycleSessions(sessions);
   const washerCard = named.find((c) => c.label!.startsWith(WASHER_CYCLE.labelPrefix));
+  const towelCard = named.find((c) => c.label!.startsWith(MORNING_TOWEL.labelPrefix));
   sessions.forEach((s, i) => {
+    if (towelCard && isMorningTowel(s)) {
+      assignment[i] = `id:${towelCard.id}`;
+      return;
+    }
     if (trains.has(i)) {
       if (iron) assignment[i] = `id:${iron.id}`;
       else trainOrphans.push(i);

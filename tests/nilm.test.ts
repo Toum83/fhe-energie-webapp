@@ -670,6 +670,20 @@ test("plausibilité : la somme des sessions en cours ne dépasse pas la maison a
   assert.equal(runPipeline(events, [], t0 + 3600000, [], [{ device: PLAUSIBLE.device, ts: events[0].ts, state: "10" }]).sessions.length, 0);
 });
 
+test("sèche-serviettes du matin : la carte ne prend que les blocs démarrés entre 5 h 30 et 6 h 45", async () => {
+  const { clusterSessions, feature } = await import("../src/lib/nilm/algorithm.ts");
+  const mk = (id: number, startIso: string, min: number, w: number) => ({ on_event_id: id, off_event_id: id + 1000, start_ts: startIso, end_ts: new Date(Date.parse(startIso) + min * 60000).toISOString(), power_w: w, duration_min: min, pct_solar: 0 });
+  const f = feature(420, 45);
+  const card = { id: 228, label: "Sèche-serviettes SdB · programme du matin", centroid_power_w: 420, centroid_log_duration: f[1] * 0.7 };
+  const sessions = [
+    mk(1, "2026-11-10T05:20:00Z", 40, 447), // 6 h 20 à Paris
+    mk(2, "2026-11-11T11:25:00Z", 41, 430), // 12 h 25 : même signature, autre appareil
+    mk(3, "2026-11-09T05:06:00Z", 54, 354),
+  ];
+  const r = clusterSessions(sessions, [card]);
+  assert.deepEqual(r.sessions.map((s) => s.cluster_key === "id:228"), [true, false, true]);
+});
+
 test("doublon : deux sessions d'une même carte qui se recouvrent, on garde la plus proche de la signature", () => {
   const iso = (s: string) => new Date(s).toISOString();
   // Thermodynamique du 21/10/2026 : deux appariements croisés pour un seul appareil.
