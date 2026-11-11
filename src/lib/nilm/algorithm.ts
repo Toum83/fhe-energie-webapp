@@ -754,6 +754,18 @@ export const WASHER_CYCLE = {
   leadMin: [20, 120] as [number, number],
   /** Deux chauffes d'un même cycle sont à moins de ça l'une de l'autre. */
   maxHeatGapMin: 75,
+  /**
+   * Programme doux (30 °C) : pas de longue chauffe mais 3 chauffes brèves qui raccourcissent,
+   * toujours au même rythme. 01/11/2026 12:22, 12:30, 12:45 ; 07/11 11:03, 11:14, 11:29 ; 11/11
+   * 10:19, 10:29, 10:44 (confirmé par l'utilisateur : 3,0 puis 2,3 puis 1,3 min à 1,7–1,8 kW,
+   * rangées en « Bouilloire »). Sur 11 jours de courbe à 7 s, ces trois séries sont les seules
+   * suites de 3 chauffes de 1 à 4 min séparées de 5 à 25 min. Le tambour frémit trop peu sur ce
+   * programme (~25 W entre relevés, comme la pompe du lave-vaisselle) pour WASHER_DRUM.
+   */
+  shortHeatPowerW: [1600, 2150] as [number, number],
+  shortHeatMin: [1, 4] as [number, number],
+  shortHeatGapMin: [5, 25] as [number, number],
+  shortHeatCount: 3,
 } as const;
 
 /**
@@ -877,6 +889,21 @@ export function washerCycleSessions(sessions: Session[]): { heats: Set<number>; 
     train.push(i);
   }
   flush(train);
+  // Programme doux : série de chauffes brèves (voir WASHER_CYCLE.shortHeat*).
+  const short = all
+    .filter((i) => inside(sessions[i].power_w, P.shortHeatPowerW) && inside(sessions[i].duration_min, P.shortHeatMin))
+    .sort(byStart);
+  let serie: number[] = [];
+  const close = () => {
+    if (serie.length >= P.shortHeatCount) serie.forEach((i) => heats.add(i));
+    serie = [];
+  };
+  for (const i of short) {
+    const prev = serie.at(-1);
+    if (prev != null && !inside((ts(sessions[i].start_ts) - ts(sessions[prev].end_ts)) / 60000, P.shortHeatGapMin)) close();
+    serie.push(i);
+  }
+  close();
   return { heats, spins };
 }
 

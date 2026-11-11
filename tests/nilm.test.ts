@@ -615,6 +615,20 @@ test("lave-linge : cycle reconnu à l'agitation du tambour, états on/off émis 
   assert.deepEqual(washerWindows(sun), []);
 });
 
+test("lave-linge programme doux : trois chauffes brèves qui se suivent, pas deux bouilloires", async () => {
+  const { washerCycleSessions } = await import("../src/lib/nilm/algorithm.ts");
+  const mk = (start: string, min: number, w: number, id: number) => {
+    const a = Date.parse(`2026-11-11T${start}Z`);
+    return { on_event_id: id, off_event_id: id + 1000, start_ts: new Date(a).toISOString(), end_ts: new Date(a + min * 60000).toISOString(), power_w: w, duration_min: min, pct_solar: 0 };
+  };
+  // 11/11/2026 : 10:19 (3,0 min), 10:29 (2,3 min), 10:44 (1,3 min), puis une vraie bouilloire à 11:15.
+  const cycle = [mk("09:19:25", 3.0, 1837, 1), mk("09:29:34", 2.3, 1773, 2), mk("09:44:30", 1.3, 1702, 3), mk("10:15:39", 1.6, 1964, 4)];
+  assert.deepEqual([...washerCycleSessions(cycle).heats].sort(), [0, 1, 2], "la bouilloire 31 min plus tard n'en fait pas partie");
+  // Deux bouilloires à 10 min d'écart, ou trois étalées sur la matinée : pas un cycle.
+  assert.equal(washerCycleSessions([mk("07:00:00", 2.5, 2000, 1), mk("07:12:00", 2.0, 2000, 2)]).heats.size, 0);
+  assert.equal(washerCycleSessions([mk("07:00:00", 2.5, 2000, 1), mk("07:40:00", 2.0, 2000, 2), mk("08:20:00", 2.0, 2000, 3)]).heats.size, 0);
+});
+
 test("doublon : deux sessions d'une même carte qui se recouvrent, on garde la plus proche de la signature", () => {
   const iso = (s: string) => new Date(s).toISOString();
   // Thermodynamique du 21/10/2026 : deux appariements croisés pour un seul appareil.
