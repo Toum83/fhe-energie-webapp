@@ -63,3 +63,39 @@ export function measuredDevices(rows: MeasuredRow[], dates: string[]): MeasuredD
 export function withoutMeasured<T extends { label: string }>(groups: T[], measured: MeasuredDevice[]): T[] {
   return groups.filter((g) => !measured.some((m) => m.complete && m.replaces.test(g.label)));
 }
+
+/**
+ * Chauffe-eau thermodynamique : le NILM ne le voit pas (compresseur ~300 W en démarrage doux, noyé
+ * dans la télé, le PC, la cuisine). Essai du 11/11/2026 par différence sur le signal maison :
+ * erreur ~0,35 kWh/jour contre son écran, pas mieux qu'une valeur fixe. Par défaut, sa carte NILM
+ * avance donc de 2,0 kWh par jour (moyenne de l'écran du 23/10 au 08/11 : 1,98), à 250 W pendant
+ * sa plage 11 h – 19 h. Le relevé de l'écran (photo) corrige ensuite les statistiques HA du jour.
+ */
+export const THERMO_DEFAULT = {
+  clusterId: 57,
+  since: "2026-11-11",
+  kwhPerDay: 2.0,
+  fromHour: 11,
+  toHour: 19,
+  timeZone: "Europe/Paris",
+} as const;
+
+/** Heures locales (fractionnaires) d'une date en ms. */
+function localClock(ms: number, timeZone: string): { day: string; hours: number } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+      .formatToParts(new Date(ms))
+      .map((p) => [p.type, p.value]),
+  );
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, hours: Number(parts.hour) + Number(parts.minute) / 60 + Number(parts.second) / 3600 };
+}
+
+/** kWh cumulés par défaut depuis `since` jusqu'à `nowMs` (jamais décroissant). */
+export function thermoDefaultKwh(nowMs: number, cfg: { since: string; kwhPerDay: number; fromHour: number; toHour: number; timeZone: string } = THERMO_DEFAULT): number {
+  const { day, hours } = localClock(nowMs, cfg.timeZone);
+  if (day < cfg.since) return 0;
+  const fullDays = Math.round((Date.parse(`${day}T12:00:00Z`) - Date.parse(`${cfg.since}T12:00:00Z`)) / 86400000);
+  const span = cfg.toHour - cfg.fromHour;
+  const today = Math.min(Math.max(hours - cfg.fromHour, 0), span) / span;
+  return Math.round((fullDays + today) * cfg.kwhPerDay * 1000) / 1000;
+}

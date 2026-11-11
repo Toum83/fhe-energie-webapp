@@ -629,6 +629,18 @@ test("lave-linge programme doux : trois chauffes brèves qui se suivent, pas deu
   assert.equal(washerCycleSessions([mk("07:00:00", 2.5, 2000, 1), mk("07:40:00", 2.0, 2000, 2), mk("08:20:00", 2.0, 2000, 3)]).heats.size, 0);
 });
 
+test("thermodynamique par défaut : 2 kWh par jour, à 250 W de 11 h à 19 h heure de Paris", async () => {
+  const { thermoDefaultKwh } = await import("../src/lib/nilm/measured.ts");
+  const at = (iso: string) => Date.parse(iso);
+  assert.equal(thermoDefaultKwh(at("2026-11-10T20:00:00Z")), 0, "avant la mise en place");
+  assert.equal(thermoDefaultKwh(at("2026-11-11T09:59:00Z")), 0, "10 h 59 à Paris");
+  assert.equal(thermoDefaultKwh(at("2026-11-11T14:00:00Z")), 1.0, "15 h : 4 h de plage");
+  assert.equal(thermoDefaultKwh(at("2026-11-11T20:00:00Z")), 2.0);
+  assert.equal(thermoDefaultKwh(at("2026-11-12T08:00:00Z")), 2.0, "le lendemain matin");
+  assert.equal(thermoDefaultKwh(at("2026-11-13T12:00:00Z")), 4.5);
+  assert.equal(thermoDefaultKwh(at("2027-03-29T16:00:00Z")), 277.75, "heure d'été : 18 h à Paris");
+});
+
 test("doublon : deux sessions d'une même carte qui se recouvrent, on garde la plus proche de la signature", () => {
   const iso = (s: string) => new Date(s).toISOString();
   // Thermodynamique du 21/10/2026 : deux appariements croisés pour un seul appareil.

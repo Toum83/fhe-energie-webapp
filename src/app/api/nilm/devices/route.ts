@@ -1,6 +1,7 @@
 import { isAdmin } from "@/lib/nilm/auth";
 import { dbConfigured, fetchDeviceTotals } from "@/lib/nilm/db";
 import { runClustering } from "@/lib/nilm/run";
+import { THERMO_DEFAULT, thermoDefaultKwh } from "@/lib/nilm/measured";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,11 @@ export async function GET(request: Request) {
     const p = raw != null && raw.trim() !== "" ? Number(raw) : NaN;
     const housePowerW = Number.isFinite(p) && p >= 0 && p <= 50000 ? p : null;
     const { running } = await runClustering(housePowerW);
-    const devices = await fetchDeviceTotals(running);
+    // Thermodynamique invisible au NILM : valeur par défaut ajoutée à sa carte (voir THERMO_DEFAULT).
+    const extra = thermoDefaultKwh(Date.now());
+    const devices = (await fetchDeviceTotals(running)).map((d) =>
+      d.cluster_id === THERMO_DEFAULT.clusterId ? { ...d, total_kwh: Math.round((Number(d.total_kwh) + extra) * 1000) / 1000 } : d,
+    );
     const by_id = Object.fromEntries(devices.map((d) => [String(d.cluster_id), Number(d.total_kwh)]));
     return Response.json({ devices, by_id });
   } catch (e) {
