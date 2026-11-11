@@ -1131,6 +1131,112 @@ export function housePowerNow(points: [number, number, number | null][], nowMs: 
   return last[1] + prod;
 }
 
+/**
+ * Contrôle de plausibilité des sessions contre la courbe à 7 s (audit du 11/11/2026). Les petits
+ * échelons (~100 W) s'apparient au hasard sur 4 h : du 02 au 11/11/2026, 119 sessions de moins de
+ * 300 W et de plus de 30 min totalisaient 35 kWh, soit 276 h de sessions pour 102 h réelles,
+ * jusqu'à 14 en même temps ; plus deux fausses sessions géantes (04/11 19:01 → 22:49 à 2 293 W).
+ * Règle : à chaque instant, la somme des sessions en cours ne peut pas dépasser ce que la maison
+ * consomme au-dessus de son fond (prises retirées). Les sessions sont admises de la plus puissante
+ * à la plus faible ; une session qui viole la règle plus de `maxBadShare` de sa durée est rejetée.
+ * Rejeu sur la même période : 77 rejets (38 kWh sur 102), aucun pour le chauffe-eau, le
+ * lave-linge, la bouilloire ou le micro-onde ; résultat stable de 40 à 100 W de tolérance.
+ * Limite : sous une grosse chauffe, la marge de 10 % laisse passer un doublon de ~100 W.
+ */
+export const PLAUSIBLE = {
+  /** Marqueur des sessions rejetées dans device_states (state = on_event_id). */
+  device: "nilm:rejet",
+  stepS: 30,
+  /** Marge : max(tolAbsW, tolRel × puissance de la session) + usedSlack × sessions déjà admises. */
+  tolAbsW: 60,
+  tolRel: 0.25,
+  /** La puissance des sessions déjà admises est connue à ~10 % près (chauffe-eau : 1 576 W retenus pour 1 660 mesurés). */
+  usedSlack: 0.1,
+  maxBadShare: 0.15,
+  /** En dessous, la session est trop courte pour être jugée (décalage prise / courbe). */
+  minMinutes: 5,
+  minBins: 4,
+  /** Fond de la maison : ce quantile des niveaux connus de la courbe fournie. */
+  baseQuantile: 0.05,
+} as const;
+
+/** Niveau de la maison hors prises par pas de `stepS` (médiane) ; injection = inconnu (absent). */
+export function houseLevels(points: [number, number, number | null][], states: DeviceState[], stepS: number = PLAUSIBLE.stepS): Map<number, number> {
+  const plugs = states
+    .filter((s) => s.device.startsWith(PLUG_PREFIX) && Number.isFinite(Number(s.state)))
+    .map((s) => [ts(s.ts), s.device, Number(s.state)] as [number, string, number])
+    .sort((a, b) => a[0] - b[0]);
+  const current = new Map<string, number>();
+  let pi = 0;
+  let plugSum = 0;
+  const bins = new Map<number, number[]>();
+  for (let i = 0; i < points.length; i++) {
+    const [t, conso, prod] = points[i];
+    while (pi < plugs.length && plugs[pi][0] <= t) {
+      plugSum += plugs[pi][2] - (current.get(plugs[pi][1]) ?? 0);
+      current.set(plugs[pi][1], plugs[pi][2]);
+      pi++;
+    }
+    // Conso figée sous production (voir steps.py de fhe_solar) : la maison injecte, niveau inconnu.
+    if ((prod ?? 0) > PARAMS.prodFloorW) {
+      let same = 0;
+      for (let k = i - 3; k <= i + 3; k++) if (k !== i && points[k]?.[1] === conso) same++;
+      if (same >= 3) continue;
+    }
+    const k = Math.floor(t / (stepS * 1000));
+    const v = conso + effectiveProductionW(prod ?? 0) - plugSum;
+    const list = bins.get(k);
+    if (list) list.push(v);
+    else bins.set(k, [v]);
+  }
+  const out = new Map<number, number>();
+  for (const [k, v] of bins) out.set(k, median(v));
+  return out;
+}
+
+/**
+ * on_event_id des sessions impossibles au vu de la courbe (voir PLAUSIBLE). Seules les sessions
+ * entièrement couvertes par `levels` sont jugées ; `alreadyRejected` sont ignorées d'emblée.
+ */
+export function implausibleSessions(sessions: Session[], levels: Map<number, number>, alreadyRejected: Set<number> = new Set()): number[] {
+  const P = PLAUSIBLE;
+  const keys = [...levels.keys()];
+  if (keys.length < 20) return [];
+  const stepMs = P.stepS * 1000;
+  let kMin = Infinity, kMax = -Infinity;
+  for (const k of keys) { if (k < kMin) kMin = k; if (k > kMax) kMax = k; }
+  const sorted = [...levels.values()].sort((a, b) => a - b);
+  const base = sorted[Math.floor(sorted.length * P.baseQuantile)];
+  const inside = sessions.filter((s) => !alreadyRejected.has(s.on_event_id) && s.end_ts && ts(s.start_ts) >= (kMin + 1) * stepMs && ts(s.end_ts) <= kMax * stepMs);
+  const order = [...inside].sort((a, b) => b.power_w - a.power_w || a.duration_min - b.duration_min);
+  const used = new Map<number, number>();
+  const rejected: number[] = [];
+  for (const s of order) {
+    const a = ts(s.start_ts), b = ts(s.end_ts);
+    let bad = 0, n = 0;
+    if (s.duration_min >= P.minMinutes) {
+      for (let k = Math.ceil((a + 20000) / stepMs); k <= Math.floor((b - 20000) / stepMs); k++) {
+        const level = levels.get(k);
+        if (level == null) continue;
+        n++;
+        const others = used.get(k) ?? 0;
+        if (others + s.power_w > level - base + Math.max(P.tolAbsW, P.tolRel * s.power_w) + P.usedSlack * others) bad++;
+      }
+    }
+    if (n >= P.minBins && bad / n > P.maxBadShare) {
+      rejected.push(s.on_event_id);
+      continue;
+    }
+    for (let k = Math.floor(a / stepMs); k <= Math.floor(b / stepMs); k++) used.set(k, (used.get(k) ?? 0) + s.power_w);
+  }
+  return rejected;
+}
+
+/** on_event_id déjà rejetés, relus dans device_states. */
+export function rejectedSessionIds(states: DeviceState[]): Set<number> {
+  return new Set(states.filter((s) => s.device === PLAUSIBLE.device).map((s) => Number(s.state)).filter(Number.isFinite));
+}
+
 export type RunningSession = { on_event_id: number; cluster_id: number; watts: number; elapsed_min: number };
 
 /**
@@ -1202,7 +1308,11 @@ export function runPipeline(
   states: DeviceState[] = [],
 ): ClusteringResult {
   const merged = subtractPlugs(mergeEvents(events), states);
-  const { sessions, unpaired } = pairSessions(merged, nowMs);
+  const paired = pairSessions(merged, nowMs);
+  // Sessions jugées impossibles au vu de la courbe (voir PLAUSIBLE) : ni carte, ni compteur.
+  const rejected = rejectedSessionIds(states);
+  const sessions = rejected.size ? paired.sessions.filter((s) => !rejected.has(s.on_event_id)) : paired.sessions;
+  const unpaired = paired.unpaired;
   const clustered = clusterSessions(sessions, existing, contexts);
   const noise = clustered.sessions.filter((s) => s.cluster_key == null).length;
   return {

@@ -1,5 +1,5 @@
 import "server-only";
-import { deviceContexts, housePowerNow, mergeEvents, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
+import { deviceContexts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
 import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, insertDeviceState, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
@@ -11,9 +11,9 @@ export async function runClustering(housePowerW: number | null = null) {
   ]);
   const states: DeviceState[] = [...loaded];
   const now = Date.now();
-  // Lave-linge reconnu à son tambour dans les 6 dernières heures de courbe : ses périodes de
-  // marche sont enregistrées comme celles d'un appareil suivi (device_states), une seule fois.
-  const curve = (await fetchCurve(new Date(now - 6 * 3600000).toISOString()).catch(() => null)) ?? [];
+  // Dernières 24 h de courbe à 7 s. Lave-linge reconnu à son tambour : ses périodes de marche
+  // sont enregistrées comme celles d'un appareil suivi (device_states), une seule fois.
+  const curve = (await fetchCurve(new Date(now - 24 * 3600000).toISOString()).catch(() => null)) ?? [];
   if (curve.length) {
     for (const st of washerStates(washerWindows(curve), states, curve[curve.length - 1][0])) {
       try {
@@ -21,6 +21,20 @@ export async function runClustering(housePowerW: number | null = null) {
         states.push(st);
       } catch {
         // pas enregistré : sera retenté au prochain passage
+      }
+    }
+  }
+  // Sessions impossibles au vu de la courbe : marquées une fois, puis écartées à chaque calcul.
+  if (curve.length) {
+    const candidates = pairSessions(subtractPlugs(mergeEvents(events), states), now).sessions;
+    const byId = new Map(candidates.map((c) => [c.on_event_id, c]));
+    for (const id of implausibleSessions(candidates, houseLevels(curve, states), rejectedSessionIds(states))) {
+      const st: DeviceState = { device: PLAUSIBLE.device, ts: byId.get(id)!.start_ts, state: String(id) };
+      try {
+        await insertDeviceState(st);
+        states.push(st);
+      } catch {
+        // pas enregistré : rejugée au prochain passage
       }
     }
   }

@@ -641,6 +641,35 @@ test("thermodynamique par défaut : 2 kWh par jour, à 250 W de 11 h à 19 h heu
   assert.equal(thermoDefaultKwh(at("2027-03-29T16:00:00Z")), 277.75, "heure d'été : 18 h à Paris");
 });
 
+test("plausibilité : la somme des sessions en cours ne dépasse pas la maison au-dessus de son fond", async () => {
+  const { houseLevels, implausibleSessions, runPipeline, PLAUSIBLE } = await import("../src/lib/nilm/algorithm.ts");
+  const t0 = Date.parse("2026-11-09T12:00:00Z");
+  // 4 h de courbe : fond 200 W, un chauffe-eau de 1 800 W de 12:30 à 14:00, un appareil de 110 W de 14:30 à 15:00.
+  const pts: [number, number, number | null][] = [];
+  for (let t = t0; t < t0 + 4 * 3600000; t += 7000) {
+    const m = (t - t0) / 60000;
+    pts.push([t, 200 + (m >= 30 && m < 120 ? 1800 : 0) + (m >= 150 && m < 180 ? 110 : 0), 0]);
+  }
+  const mk = (id: number, from: number, to: number, w: number) => ({ on_event_id: id, off_event_id: id + 1000, start_ts: new Date(t0 + from * 60000).toISOString(), end_ts: new Date(t0 + to * 60000).toISOString(), power_w: w, duration_min: to - from, pct_solar: 0 });
+  const heater = mk(1, 30, 120, 1800), real = mk(2, 150, 180, 110);
+  const ghost = mk(3, 160, 235, 110); // se poursuit 55 min après le retour au fond
+  const twin = mk(4, 151, 179, 115); // même créneau que l'appareil réel : un seul des deux existe
+  const short = mk(5, 10, 13, 2000); // trop courte pour être jugée
+  const levels = houseLevels(pts, []);
+  assert.deepEqual(implausibleSessions([heater, real], levels), []);
+  assert.deepEqual(implausibleSessions([heater, real, ghost, twin, short], levels).sort(), [2, 3], "le jumeau le plus puissant est gardé, le fantôme rejeté");
+  assert.deepEqual(implausibleSessions([heater, ghost], levels, new Set([3])), [], "déjà rejetée : ignorée");
+  // Prise mesurée retirée du niveau : une session de 2 kW pendant une chauffe du lave-vaisselle est impossible.
+  const plug = [{ device: "prise:lave_vaisselle", ts: new Date(t0 + 200 * 60000).toISOString(), state: "2000" }, { device: "prise:lave_vaisselle", ts: new Date(t0 + 215 * 60000).toISOString(), state: "30" }];
+  const withPlug = pts.map(([t, c, p]): [number, number, number | null] => [t, c + (t >= t0 + 200 * 60000 && t < t0 + 215 * 60000 ? 2000 : 30), p]);
+  assert.deepEqual(implausibleSessions([mk(6, 201, 214, 1900)], houseLevels(withPlug, plug)), [6]);
+  // Le pipeline écarte les sessions marquées dans device_states.
+  const ev = (id: number, min: number, d: number) => ({ id, ts: new Date(t0 + min * 60000).toISOString(), delta_w: d, power_before: 200, power_after: 200 + d, direction: (d > 0 ? "on" : "off") as "on" | "off", production_power: 0 });
+  const events = [ev(10, 10, 1500), ev(11, 25, -1500)];
+  assert.equal(runPipeline(events, [], t0 + 3600000).sessions.length, 1);
+  assert.equal(runPipeline(events, [], t0 + 3600000, [], [{ device: PLAUSIBLE.device, ts: events[0].ts, state: "10" }]).sessions.length, 0);
+});
+
 test("doublon : deux sessions d'une même carte qui se recouvrent, on garde la plus proche de la signature", () => {
   const iso = (s: string) => new Date(s).toISOString();
   // Thermodynamique du 21/10/2026 : deux appariements croisés pour un seul appareil.
