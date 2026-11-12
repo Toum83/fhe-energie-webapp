@@ -570,14 +570,15 @@ test("compteurs HA corrigés : remplacent le NILM seulement s'ils couvrent toute
 });
 
 test("puissance maison actuelle : soutirage + production, inconnue en injection ou sans courbe récente", async () => {
-  const { housePowerNow, effectiveProductionW } = await import("../src/lib/nilm/algorithm.ts");
+  const { housePowerNow, effectiveProductionW, realConsumptionW } = await import("../src/lib/nilm/algorithm.ts");
   const t = Date.parse("2026-11-10T13:00:00Z");
   const pts = (rows: [number, number | null][]): [number, number, number | null][] => rows.map(([c, p], i) => [t - (rows.length - 1 - i) * 7000, c, p]);
-  assert.equal(housePowerNow(pts([[1900, 0], [1905, 0]]), t), 1905);
-  assert.equal(Math.round(housePowerNow(pts([[1300, 900], [1100, 1100]]), t)!), Math.round(1100 + effectiveProductionW(1100)));
+  assert.equal(housePowerNow(pts([[1900, 0], [1905, 0]]), t), realConsumptionW(1905));
+  assert.equal(Math.round(housePowerNow(pts([[1300, 900], [1100, 1100]]), t)!), Math.round(realConsumptionW(1100) + effectiveProductionW(1100)));
+  assert.ok(Math.abs(realConsumptionW(240) - 116) < 2, "240 W lus la nuit = ~120 W réels (Linky)");
   assert.equal(effectiveProductionW(120), 0, "plancher de la pince production");
   assert.equal(housePowerNow(pts([[279, 400], [279, 450], [279, 500], [279, 520]]), t), null, "conso figée sous production : injection");
-  assert.equal(housePowerNow(pts([[250, 0], [250, 0], [250, 0], [250, 0]]), t), 250, "valeurs identiques la nuit : pas un gel");
+  assert.equal(housePowerNow(pts([[250, 0], [250, 0], [250, 0], [250, 0]]), t), realConsumptionW(250), "valeurs identiques la nuit : pas un gel");
   assert.equal(housePowerNow(pts([[1900, 0]]), t + 6 * 60000), null, "courbe trop vieille");
   assert.equal(housePowerNow([], t), null);
 });
@@ -644,11 +645,13 @@ test("thermodynamique par défaut : 2 kWh par jour, à 250 W de 11 h à 19 h heu
 test("plausibilité : la somme des sessions en cours ne dépasse pas la maison au-dessus de son fond", async () => {
   const { houseLevels, implausibleSessions, runPipeline, PLAUSIBLE } = await import("../src/lib/nilm/algorithm.ts");
   const t0 = Date.parse("2026-11-09T12:00:00Z");
-  // 4 h de courbe : fond 200 W, un chauffe-eau de 1 800 W de 12:30 à 14:00, un appareil de 110 W de 14:30 à 15:00.
+  // 4 h de courbe : fond 120 W réels, un chauffe-eau de 1 800 W de 12:30 à 14:00, un appareil de 110 W de 14:30 à 15:00.
   const pts: [number, number, number | null][] = [];
   for (let t = t0; t < t0 + 4 * 3600000; t += 7000) {
     const m = (t - t0) / 60000;
-    pts.push([t, 200 + (m >= 30 && m < 120 ? 1800 : 0) + (m >= 150 && m < 180 ? 110 : 0), 0]);
+    // La pince lit une puissance apparente : réel² + 210² (voir PARAMS.consoReactiveVar).
+    const real = 120 + (m >= 30 && m < 120 ? 1800 : 0) + (m >= 150 && m < 180 ? 110 : 0);
+    pts.push([t, Math.hypot(real, 210), 0]);
   }
   const mk = (id: number, from: number, to: number, w: number) => ({ on_event_id: id, off_event_id: id + 1000, start_ts: new Date(t0 + from * 60000).toISOString(), end_ts: new Date(t0 + to * 60000).toISOString(), power_w: w, duration_min: to - from, pct_solar: 0 });
   const heater = mk(1, 30, 120, 1800), real = mk(2, 150, 180, 110);

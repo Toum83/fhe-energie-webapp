@@ -151,6 +151,14 @@ export const PARAMS = {
   /** Lecture de la pince « Production » sans puissance réelle (onduleur sous tension), retirée en quadrature. */
   prodFloorW: 120,
   /**
+   * Part réactive de la pince « Consommation » (var), retirée en quadrature : la pince lit une
+   * puissance apparente, juste à forte charge mais double près du fond (240 W lus pour 120 W réels
+   * la nuit). Calée sur Linky (Hello Watt) les 05 et 10/11/2026 : soutirage 9,45 et 12,89 kWh
+   * pour 9,36 et 12,76 réels, contre 11,45 et 14,72 sans correction. Même valeur que steps.py
+   * (fhe_solar 0.7.0).
+   */
+  consoReactiveVar: 210,
+  /**
    * Creux d'un seul relevé : un OFF aussitôt suivi (<= 150 s) d'un ON qui reprend au moins 60 % de
    * la baisse n'est pas un arrêt. Apparu avec le relevé à la minute (10/10/2026) : le chauffe-eau
    * a plongé 1 min à 13 h 02 (1 376 -> 947 W) puis est remonté ; ce faux « retour au niveau »
@@ -807,7 +815,7 @@ export function washerWindows(points: [number, number, number | null][]): Washer
     const [t0, c0, p0] = points[i - 1];
     const [t1, c1, p1] = points[i];
     if (t1 - t0 > 15000) continue;
-    const d = Math.abs(c1 + effectiveProductionW(p1 ?? 0) - c0 - effectiveProductionW(p0 ?? 0));
+    const d = Math.abs(realConsumptionW(c1) + effectiveProductionW(p1 ?? 0) - realConsumptionW(c0) - effectiveProductionW(p0 ?? 0));
     const k = Math.floor(t1 / blockMs);
     const list = blocks.get(k);
     if (list) list.push(d);
@@ -1145,6 +1153,11 @@ export function effectiveProductionW(watts: number): number {
   return Math.sqrt(Math.max(watts * watts - PARAMS.prodFloorW * PARAMS.prodFloorW, 0));
 }
 
+/** Soutirage réel estimé à partir de la lecture de la pince « Consommation » (voir PARAMS.consoReactiveVar). */
+export function realConsumptionW(watts: number): number {
+  return Math.sqrt(Math.max(watts * watts - PARAMS.consoReactiveVar * PARAMS.consoReactiveVar, 0));
+}
+
 /**
  * Puissance actuelle de la maison d'après les derniers points de la courbe FHE à 7 s
  * ([ms, soutirage W, production W]) : soutirage + production. null si la courbe est trop vieille
@@ -1156,7 +1169,7 @@ export function housePowerNow(points: [number, number, number | null][], nowMs: 
   const prod = effectiveProductionW(last[2] ?? 0);
   const tail = points.slice(-4);
   if (prod > 0 && tail.length === 4 && tail.every((p) => p[1] === last[1])) return null;
-  return last[1] + prod;
+  return realConsumptionW(last[1]) + prod;
 }
 
 /**
@@ -1212,7 +1225,7 @@ export function houseLevels(points: [number, number, number | null][], states: D
       if (same >= 3) continue;
     }
     const k = Math.floor(t / (stepS * 1000));
-    const v = conso + effectiveProductionW(prod ?? 0) - plugSum;
+    const v = realConsumptionW(conso) + effectiveProductionW(prod ?? 0) - plugSum;
     const list = bins.get(k);
     if (list) list.push(v);
     else bins.set(k, [v]);
