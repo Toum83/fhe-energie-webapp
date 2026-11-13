@@ -28,7 +28,7 @@ export async function runClustering(housePowerW: number | null = null) {
   if (curve.length) {
     const candidates = pairSessions(subtractPlugs(mergeEvents(events), states), now).sessions;
     const byId = new Map(candidates.map((c) => [c.on_event_id, c]));
-    for (const id of implausibleSessions(candidates, houseLevels(curve, states), rejectedSessionIds(states))) {
+    for (const id of implausibleSessions(candidates, houseLevels(curve, states), rejectedSessionIds(states), deviceContexts(states, now))) {
       const st: DeviceState = { device: PLAUSIBLE.device, ts: byId.get(id)!.start_ts, state: String(id) };
       try {
         await insertDeviceState(st);

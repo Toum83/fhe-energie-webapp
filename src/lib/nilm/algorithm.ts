@@ -1199,7 +1199,41 @@ export const PLAUSIBLE = {
   minBins: 4,
   /** Fond de la maison : ce quantile des niveaux connus de la courbe fournie. */
   baseQuantile: 0.05,
+  /**
+   * Garde-fou des petites sessions longues (cas réel du 13/11/2026 : « PC Lenny » 322 W de 10:01
+   * à 12:44, fabriqué avec la queue d'une impulsion de cuisine et le départ du lave-vaisselle,
+   * posé sur un fond de 320 W qui le rendait plausible). Le niveau de la maison doit monter d'au
+   * moins `minShare` × la puissance au départ OU redescendre d'autant à l'arrêt (médianes de
+   * `windowS` de part et d'autre, `gapS` exclus autour du bord) : session rejetée si aucun des
+   * bords connus ne se voit. Un bord masqué (injection) n'est pas jugé.
+   */
+  edgeMaxPowerW: 600,
+  edgeMinMinutes: 20,
+  edgeWindowS: 180,
+  edgeGapS: 30,
+  edgeMinShare: 0.5,
+  edgeMinBins: 2,
 } as const;
+
+/**
+ * Le bord d'une session se voit-il sur la courbe ? `rise` = niveau après − niveau avant (positif
+ * attendu au départ, négatif à l'arrêt). null si l'un des deux côtés est inconnu.
+ */
+export function edgeRise(levels: Map<number, number>, atMs: number): number | null {
+  const P = PLAUSIBLE;
+  const stepMs = P.stepS * 1000;
+  const side = (from: number, to: number) => {
+    const v: number[] = [];
+    for (let k = Math.floor(from / stepMs); k <= Math.floor(to / stepMs); k++) {
+      const x = levels.get(k);
+      if (x != null) v.push(x);
+    }
+    return v.length >= P.edgeMinBins ? median(v) : null;
+  };
+  const before = side(atMs - P.edgeWindowS * 1000, atMs - P.edgeGapS * 1000 - stepMs);
+  const after = side(atMs + P.edgeGapS * 1000 + stepMs, atMs + P.edgeWindowS * 1000);
+  return before == null || after == null ? null : after - before;
+}
 
 /** Niveau de la maison hors prises par pas de `stepS` (médiane) ; injection = inconnu (absent). */
 export function houseLevels(points: [number, number, number | null][], states: DeviceState[], stepS: number = PLAUSIBLE.stepS): Map<number, number> {
@@ -1239,7 +1273,13 @@ export function houseLevels(points: [number, number, number | null][], states: D
  * on_event_id des sessions impossibles au vu de la courbe (voir PLAUSIBLE). Seules les sessions
  * entièrement couvertes par `levels` sont jugées ; `alreadyRejected` sont ignorées d'emblée.
  */
-export function implausibleSessions(sessions: Session[], levels: Map<number, number>, alreadyRejected: Set<number> = new Set()): number[] {
+export function implausibleSessions(
+  sessions: Session[],
+  levels: Map<number, number>,
+  alreadyRejected: Set<number> = new Set(),
+  /** Sessions pendant un appareil connu (lave-linge, vidéoproj…) : bords flous, pas de garde-fou des bords. */
+  contexts: DeviceContext[] = [],
+): number[] {
   const P = PLAUSIBLE;
   const keys = [...levels.keys()];
   if (keys.length < 20) return [];
@@ -1264,7 +1304,16 @@ export function implausibleSessions(sessions: Session[], levels: Map<number, num
         if (others + s.power_w > level - base + Math.max(P.tolAbsW, P.tolRel * s.power_w) + P.usedSlack * others) bad++;
       }
     }
-    if (n >= P.minBins && bad / n > P.maxBadShare) {
+    let edgesMissing = false;
+    if (s.power_w <= P.edgeMaxPowerW && s.duration_min >= P.edgeMinMinutes && !contexts.some((c) => onShare(s, c) >= 0.5)) {
+      const up = edgeRise(levels, a);
+      const down = edgeRise(levels, b);
+      const need = P.edgeMinShare * s.power_w;
+      // Les deux bords connus doivent manquer : un seul bord flou (appareil déjà en marche,
+      // départ caché par une impulsion voisine) ne suffit pas à rejeter.
+      edgesMissing = (up != null || down != null) && (up == null || up < need) && (down == null || -down < need);
+    }
+    if (edgesMissing || (n >= P.minBins && bad / n > P.maxBadShare)) {
       rejected.push(s.on_event_id);
       continue;
     }

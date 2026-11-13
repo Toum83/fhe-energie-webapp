@@ -936,3 +936,27 @@ test("lave-linge : les chauffes vont à sa carte, l'essorage quitte le micro-ond
   assert.ok(out.slice(1, 4).every((x) => x.cluster_key === "id:55"));
   assert.ok(out.slice(4).every((x) => x.cluster_key !== "id:52"));
 });
+
+test("plausibilité : une petite session longue doit se voir à au moins un de ses bords", async () => {
+  const { houseLevels, implausibleSessions } = await import("../src/lib/nilm/algorithm.ts");
+  const t0 = Date.parse("2026-11-13T08:30:00Z");
+  // Cas réel du 13/11 : fond de 330 W (rien avant 08:55, pour que le fond rende la session plausible) ; une impulsion de cuisine à 09:00:33 ; le lave-vaisselle part à 11:44:49.
+  // Un vrai PC de 300 W tourne de 12:10 à 14:30.
+  const pts: [number, number, number | null][] = [];
+  for (let t = t0; t < t0 + 7 * 3600000; t += 7000) {
+    const m = (t - t0) / 60000;
+    const real = (m < 25 ? 0 : 330) + (m >= 30.5 && m < 30.7 ? 1100 : 0) + (m >= 194.8 && m < 218 ? 2000 : 0) + (m >= 220 && m < 360 ? 300 : 0);
+    pts.push([t, Math.hypot(real, 210), 0]);
+  }
+  const mk = (id: number, from: number, to: number, w: number) => ({ on_event_id: id, off_event_id: id + 1000, start_ts: new Date(t0 + from * 60000).toISOString(), end_ts: new Date(t0 + to * 60000).toISOString(), power_w: w, duration_min: to - from, pct_solar: 0 });
+  const fake = mk(1, 31.1, 194.8, 322); // ni montée au départ, ni baisse à l'arrêt
+  const pc = mk(2, 220, 360, 300);
+  const levels = houseLevels(pts, []);
+  assert.deepEqual(implausibleSessions([fake, pc], levels), [1]);
+  // Un seul bord net suffit (appareil déjà en marche quand un autre s'arrête, départ masqué…).
+  const halfSeen = mk(3, 200, 360, 300);
+  assert.deepEqual(implausibleSessions([halfSeen], levels), []);
+  // Pendant un appareil connu (contexte « on »), le garde-fou ne s'applique pas.
+  const ctx = [{ labelPrefix: "Lave-linge", since: fake.start_ts, on: [[t0 + 25 * 60000, t0 + 200 * 60000]] as [number, number][], minOnShare: 0.6 }];
+  assert.deepEqual(implausibleSessions([fake], levels, new Set(), ctx), []);
+});
