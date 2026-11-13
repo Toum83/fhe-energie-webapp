@@ -774,6 +774,22 @@ export const WASHER_CYCLE = {
   shortHeatMin: [1, 4] as [number, number],
   shortHeatGapMin: [5, 25] as [number, number],
   shortHeatCount: 3,
+  /**
+   * Programme à une seule chauffe sans essorage visible (30 °C du 12/11/2026, 13 h 29 → 15 h 45,
+   * confirmé par l'utilisateur) : une chauffe d'environ 2 kW de 6 à 25 min, puis pendant le lavage
+   * des à-coups du moteur de 150 à 450 W, brefs (7 à 30 s). Du 31/10 au 13/11/2026 : 7 à-coups
+   * après la chauffe du 12/11, 7 à 10 après celles du cycle du 04/11, 0 ou 1 après les 8 autres
+   * chauffes de 1,6 à 2,7 kW (four à 2,3 kW, lave-vaisselle). Le four chauffe plus fort (≥ 2,28 kW).
+   * Appliqué aux chauffes à partir de `motorSince` (le 12/11 est déjà corrigé à la main dans HA).
+   */
+  motorHeatPowerW: [1800, 2200] as [number, number],
+  motorHeatMin: [6, 25] as [number, number],
+  motorPulseW: [150, 450] as [number, number],
+  motorPulseMaxMin: 0.5,
+  /** Fenêtre après la fin de la chauffe où compter les à-coups. */
+  motorLeadMin: [20, 150] as [number, number],
+  motorMinPulses: 5,
+  motorSince: "2026-11-13T00:00:00Z",
 } as const;
 
 /**
@@ -912,6 +928,15 @@ export function washerCycleSessions(sessions: Session[]): { heats: Set<number>; 
     serie.push(i);
   }
   close();
+  // Une seule chauffe suivie des à-coups du moteur (voir WASHER_CYCLE.motor*).
+  const motorPulses = all.filter((i) => inside(sessions[i].power_w, P.motorPulseW) && sessions[i].duration_min <= P.motorPulseMaxMin).map((i) => ts(sessions[i].start_ts));
+  for (const i of all) {
+    const h = sessions[i];
+    if (ts(h.start_ts) < Date.parse(P.motorSince) || !inside(h.power_w, P.motorHeatPowerW) || !inside(h.duration_min, P.motorHeatMin)) continue;
+    const e = ts(h.end_ts);
+    const n = motorPulses.filter((t) => t > e + P.motorLeadMin[0] * 60000 && t < e + P.motorLeadMin[1] * 60000).length;
+    if (n >= P.motorMinPulses) heats.add(i);
+  }
   return { heats, spins };
 }
 

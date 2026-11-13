@@ -988,3 +988,20 @@ test("départ caché pendant l'injection : reconstruit au milieu du gel, jamais 
   // Déjà traité : ignoré.
   assert.deepEqual(hiddenStarts([off], [], houseLevels(curveWith(65, true), []), new Set([9])), []);
 });
+
+test("lave-linge à une seule chauffe : reconnu aux à-coups du moteur qui suivent, pas le four", async () => {
+  const { washerCycleSessions } = await import("../src/lib/nilm/algorithm.ts");
+  const t0 = Date.parse("2026-11-14T12:00:00Z");
+  const mk = (id: number, from: number, dur: number, w: number) => ({ on_event_id: id, off_event_id: id + 1000, start_ts: new Date(t0 + from * 60000).toISOString(), end_ts: new Date(t0 + (from + dur) * 60000).toISOString(), power_w: w, duration_min: dur, pct_solar: 0 });
+  // Comme le 12/11 : chauffe de 2 016 W pendant 12,5 min, puis 7 à-coups de 210 à 320 W.
+  const heat = mk(1, 33, 12.5, 2016);
+  const pulses = [112, 128, 158, 160, 179, 182, 185].map((m, k) => mk(10 + k, m, 0.2, 210 + 15 * k));
+  assert.deepEqual([...washerCycleSessions([heat, ...pulses]).heats], [0]);
+  // Le four (2,3 kW) suivi d'à-coups, ou une chauffe de 2 kW sans à-coups : rien.
+  assert.equal(washerCycleSessions([mk(2, 33, 9, 2300), ...pulses]).heats.size, 0);
+  assert.equal(washerCycleSessions([heat, ...pulses.slice(0, 4)]).heats.size, 0);
+  // Avant la date d'application : rien (le 12/11 est corrigé à la main).
+  const old = { ...heat, start_ts: "2026-11-12T12:33:20Z", end_ts: "2026-11-12T12:45:50Z" };
+  const oldPulses = pulses.map((p) => ({ ...p, start_ts: new Date(Date.parse(p.start_ts) - 2 * 86400000).toISOString(), end_ts: new Date(Date.parse(p.end_ts) - 2 * 86400000).toISOString() }));
+  assert.equal(washerCycleSessions([old, ...oldPulses]).heats.size, 0);
+});
