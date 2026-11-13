@@ -54,6 +54,9 @@ export const fetchDeviceStates = async () => (await rpc<import("./algorithm").De
 export const fetchCurve = (sinceIso: string) => rpc<[number, number, number | null][] | null>("nilm_get_curve", { since: sinceIso });
 /** État d'un appareil (même fonction SQL que les événements : payload avec `device`). */
 export const insertDeviceState = (state: import("./algorithm").DeviceState) => rpc<null>("insert_power_event", { payload: state });
+/** Échelon reconstruit (départ caché pendant l'injection), inséré comme ceux de HA. */
+export const insertPowerEvent = (e: { ts: string; delta_w: number; direction: "on" | "off"; power_before: number | null; power_after: number | null }) =>
+  rpc<null>("insert_power_event", { payload: { ...e, production_power: null } });
 export const saveClustering = (payload: unknown) => rpc<{ clusters: number; sessions: number }>("nilm_save_clustering", { payload });
 export const setLabel = (clusterId: number, label: string, icon: string | null) =>
   rpc<null>("nilm_set_label", { cluster_id: clusterId, new_label: label, new_icon: icon });

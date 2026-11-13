@@ -960,3 +960,31 @@ test("plausibilité : une petite session longue doit se voir à au moins un de s
   const ctx = [{ labelPrefix: "Lave-linge", since: fake.start_ts, on: [[t0 + 25 * 60000, t0 + 200 * 60000]] as [number, number][], minOnShare: 0.6 }];
   assert.deepEqual(implausibleSessions([fake], levels, new Set(), ctx), []);
 });
+
+test("départ caché pendant l'injection : reconstruit au milieu du gel, jamais quand le départ se voit", async () => {
+  const { houseLevels, hiddenStarts } = await import("../src/lib/nilm/algorithm.ts");
+  const t0 = Date.parse("2026-11-12T12:00:00Z");
+  // Cas réel du 12/11 : chauffe-eau de 1 800 W parti pendant un gel d'injection (60 → 70 min), arrêté à 200 min.
+  const curveWith = (startMin: number, freeze: boolean) => {
+    const pts: [number, number, number | null][] = [];
+    for (let t = t0; t < t0 + 240 * 60000; t += 7000) {
+      const m = (t - t0) / 60000;
+      if (freeze && m >= 60 && m < 70) pts.push([t, 300, 1500]); // pince figée sous production
+      else pts.push([t, Math.hypot(200 + (m >= startMin && m < 200 ? 1800 : 0), 210), 0]);
+    }
+    return pts;
+  };
+  const off = { id: 9, ts: new Date(t0 + 200 * 60000).toISOString(), delta_w: -1800, power_before: 2000, power_after: 200, direction: "off" as const, production_power: 0 };
+  const found = hiddenStarts([off], [], houseLevels(curveWith(65, true), []));
+  assert.equal(found.length, 1);
+  assert.ok(Math.abs(Date.parse(found[0].ts) - (t0 + 65 * 60000)) <= 90000, found[0].ts);
+  assert.equal(found[0].delta_w, 1800);
+  assert.equal(found[0].power_before, 200);
+  // Départ visible sur la courbe (pas de gel) : pas d'invention.
+  assert.deepEqual(hiddenStarts([off], [], houseLevels(curveWith(50, false), [])), []);
+  // Un échelon de départ existe à la sortie du gel : rien à inventer.
+  const on = { id: 8, ts: new Date(t0 + 70.2 * 60000).toISOString(), delta_w: 1750, power_before: 200, power_after: 1950, direction: "on" as const, production_power: 0 };
+  assert.deepEqual(hiddenStarts([on, off], [], houseLevels(curveWith(65, true), [])), []);
+  // Déjà traité : ignoré.
+  assert.deepEqual(hiddenStarts([off], [], houseLevels(curveWith(65, true), []), new Set([9])), []);
+});

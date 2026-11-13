@@ -1322,6 +1322,104 @@ export function implausibleSessions(
   return rejected;
 }
 
+/**
+ * Départs cachés pendant l'injection. Quand la maison injecte, la pince consommation reste figée
+ * (niveau inconnu) : un appareil qui démarre à ce moment n'a pas d'échelon de départ, seul son
+ * arrêt se voit. Cas réel du 12/11/2026 : chauffe-eau du haut parti vers 13 h 50 pendant un gel
+ * de 10 min, arrêt −1 837 W à 16 h 29 resté sans départ ; 4,5 kWh jamais comptés.
+ *
+ * Pour un arrêt d'au moins `minW` resté sans départ, on remonte la courbe depuis l'arrêt tant
+ * que la maison (moins les sessions déjà admises) reste au-dessus du niveau d'après l'arrêt
+ * + `onShare` × sa puissance. Si la remontée s'interrompt sur un gel (niveaux inconnus) de
+ * `minGapMin` à `maxGapMin`, juste après un niveau connu où l'appareil était éteint, le départ
+ * est placé au milieu du gel. Un départ visible (pas de gel) n'est pas inventé.
+ */
+export const HIDDEN_START = {
+  /** device_states : une marque par arrêt traité (state = id de l'arrêt), pour ne le faire qu'une fois. */
+  device: "nilm:depart_cache",
+  minW: 800,
+  onShare: 0.6,
+  lookbackMin: 360,
+  minGapMin: 1,
+  maxGapMin: 30,
+  /** L'appareil doit se voir en marche au moins ce temps entre le gel et l'arrêt. */
+  minOnMin: 5,
+  lowBins: 2,
+  /** Seules les sessions admises d'au moins cette puissance sont retirées du niveau (les petites sont trop souvent fausses). */
+  othersMinW: 800,
+} as const;
+
+export type HiddenStart = { off_event_id: number; ts: string; delta_w: number; power_before: number | null; power_after: number | null };
+
+export function hiddenStarts(merged: PowerEvent[], sessions: Session[], levels: Map<number, number>, done: Set<number> = new Set()): HiddenStart[] {
+  const H = HIDDEN_START;
+  const stepMs = PLAUSIBLE.stepS * 1000;
+  const paired = new Set(sessions.map((s) => s.off_event_id));
+  const ends = new Set(sessions.map((s) => ts(s.end_ts)));
+  const out: HiddenStart[] = [];
+  for (const off of merged) {
+    if (off.direction !== "off" || -off.delta_w < H.minW || paired.has(off.id) || done.has(off.id) || ends.has(ts(off.ts))) continue;
+    const p = -off.delta_w;
+    const t = ts(off.ts);
+    const kOff = Math.floor(t / stepMs);
+    const afterVals: number[] = [];
+    for (let k = kOff + 2; k <= kOff + 6; k++) {
+      const v = levels.get(k);
+      if (v != null) afterVals.push(v);
+    }
+    if (afterVals.length < 2) continue;
+    const threshold = median(afterVals) + H.onShare * p;
+    const others = (k: number) => {
+      const a = k * stepMs, b = a + stepMs;
+      return sessions.reduce((acc, s) => (s.power_w >= H.othersMinW && ts(s.start_ts) < b && ts(s.end_ts) > a ? acc + s.power_w : acc), 0);
+    };
+    let firstOn: number | null = null;
+    let onBins = 0;
+    let gapStart: number | null = null; // plus ancien bin inconnu de la série en cours
+    let found: number | null = null;
+    let gapFrom = 0, gapTo = 0;
+    let lowRun = 0;
+    for (let k = kOff - 1; k >= kOff - (H.lookbackMin * 60000) / stepMs; k--) {
+      const v = levels.get(k);
+      if (v == null) {
+        if (lowRun === 0) gapStart = k;
+        continue;
+      }
+      if (v - others(k) >= threshold) {
+        firstOn = k;
+        onBins++;
+        gapStart = null;
+        lowRun = 0;
+        continue;
+      }
+      // Un bin bas isolé (session voisine mal estimée) ne suffit pas : il en faut `lowBins` de suite.
+      if (++lowRun < H.lowBins) continue;
+      // Appareil éteint ici : le départ est entre k et firstOn.
+      if (firstOn != null && gapStart != null) {
+        const gapMin = ((firstOn - gapStart) * stepMs) / 60000;
+        if (gapMin >= H.minGapMin && gapMin <= H.maxGapMin && (onBins * stepMs) / 60000 >= H.minOnMin) {
+          found = Math.round(((gapStart + firstOn) / 2) * stepMs);
+          gapFrom = gapStart * stepMs;
+          gapTo = (firstOn + 1) * stepMs;
+        }
+      }
+      break;
+    }
+    if (found == null) continue;
+    // Un vrai départ de taille comparable dans le gel ou juste à sa sortie : rien à inventer.
+    const visible = merged.some((e) => e.direction === "on" && e.delta_w >= H.onShare * p && ts(e.ts) >= gapFrom - 60000 && ts(e.ts) <= gapTo + 60000);
+    if (visible) continue;
+    out.push({
+      off_event_id: off.id,
+      ts: new Date(found).toISOString(),
+      delta_w: Math.round(p),
+      power_before: off.power_after ?? null,
+      power_after: off.power_after != null ? off.power_after + p : null,
+    });
+  }
+  return out;
+}
+
 /** on_event_id déjà rejetés, relus dans device_states. */
 export function rejectedSessionIds(states: DeviceState[]): Set<number> {
   return new Set(states.filter((s) => s.device === PLAUSIBLE.device).map((s) => Number(s.state)).filter(Number.isFinite));

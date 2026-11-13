@@ -1,15 +1,16 @@
 import "server-only";
-import { deviceContexts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
-import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, insertDeviceState, saveClustering } from "./db";
+import { deviceContexts, HIDDEN_START, hiddenStarts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
+import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, insertDeviceState, insertPowerEvent, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
 export async function runClustering(housePowerW: number | null = null) {
-  const [events, existing, loaded] = await Promise.all([
+  const [fetched, existing, loaded] = await Promise.all([
     fetchEvents(),
     fetchClusters(),
     fetchDeviceStates().catch(() => []), // fonction SQL pas encore installée : pas de contexte
   ]);
   const states: DeviceState[] = [...loaded];
+  let events = fetched;
   const now = Date.now();
   // Dernières 24 h de courbe à 7 s. Lave-linge reconnu à son tambour : ses périodes de marche
   // sont enregistrées comme celles d'un appareil suivi (device_states), une seule fois.
@@ -37,6 +38,25 @@ export async function runClustering(housePowerW: number | null = null) {
         // pas enregistré : rejugée au prochain passage
       }
     }
+    // Départs cachés pendant l'injection : l'arrêt seul est visible, le départ est reconstruit
+    // au milieu du gel et inséré comme un échelon ordinaire (une seule fois par arrêt).
+    const rejected = rejectedSessionIds(states);
+    const admitted = candidates.filter((c) => !rejected.has(c.on_event_id));
+    const done = new Set(states.filter((s) => s.device === HIDDEN_START.device).map((s) => Number(s.state)));
+    const merged = subtractPlugs(mergeEvents(events), states);
+    let added = 0;
+    for (const h of hiddenStarts(merged, admitted, houseLevels(curve, states), done)) {
+      try {
+        const mark: DeviceState = { device: HIDDEN_START.device, ts: h.ts, state: String(h.off_event_id) };
+        await insertDeviceState(mark);
+        states.push(mark);
+        await insertPowerEvent({ ts: h.ts, delta_w: h.delta_w, direction: "on", power_before: h.power_before, power_after: h.power_after });
+        added++;
+      } catch {
+        // pas enregistré : retenté au prochain passage si la marque manque
+      }
+    }
+    if (added) events = await fetchEvents();
   }
   const contexts = deviceContexts(states, now);
   const result = runPipeline(events, existing, now, contexts, states);
