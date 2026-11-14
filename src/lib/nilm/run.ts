@@ -1,5 +1,5 @@
 import "server-only";
-import { deviceContexts, HIDDEN_START, hiddenStarts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
+import { deviceContexts, HIDDEN_START, hiddenStarts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerPendingState, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
 import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, insertDeviceState, insertPowerEvent, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
@@ -24,6 +24,10 @@ export async function runClustering(housePowerW: number | null = null) {
         // pas enregistré : sera retenté au prochain passage
       }
     }
+    // Cycle en cours pas encore confirmé : allumé pour ce calcul seulement, pour que ses chauffes
+    // n'aillent pas au four le temps que le tambour soit reconnu.
+    const pending = washerPendingState(curve, states);
+    if (pending) states.push(pending);
   }
   // Sessions impossibles au vu de la courbe : marquées une fois, puis écartées à chaque calcul.
   if (curve.length) {

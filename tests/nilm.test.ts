@@ -1005,3 +1005,39 @@ test("lave-linge à une seule chauffe : reconnu aux à-coups du moteur qui suive
   const oldPulses = pulses.map((p) => ({ ...p, start_ts: new Date(Date.parse(p.start_ts) - 2 * 86400000).toISOString(), end_ts: new Date(Date.parse(p.end_ts) - 2 * 86400000).toISOString() }));
   assert.equal(washerCycleSessions([old, ...oldPulses]).heats.size, 0);
 });
+
+test("lave-linge en cours : allumé dès 2 tranches agitées, ses chauffes vont à sa carte même hors rayon", async () => {
+  const { clusterSessions, deviceContexts, washerPendingState } = await import("../src/lib/nilm/algorithm.ts");
+  // Brassage dès 10 h 30 (heure de Paris) ; à 10 h 41, 2 tranches seulement : cycle pas confirmé.
+  const t0 = Date.parse("2026-11-14T09:00:00Z");
+  const pts: [number, number, number | null][] = [];
+  for (let i = 0; i * 7000 < 41 * 60000; i++) {
+    const drum = i * 7000 >= 30 * 60000;
+    pts.push([t0 + i * 7000, 400 + (drum ? (i % 2 ? 110 : 0) : i % 2 ? 5 : 0), 0]);
+  }
+  const pending = washerPendingState(pts, []);
+  assert.equal(pending?.ts, "2026-11-14T09:25:00.000Z");
+  assert.equal(washerPendingState(pts, [{ device: "lave_linge", ts: "2026-11-14T09:25:00Z", state: "on" }]), null, "déjà allumé");
+  assert.equal(washerPendingState(pts.filter((p) => p[0] < t0 + 36 * 60000), []), null, "une seule tranche : rien");
+
+  const four = { id: 9, label: "Four · préchauffe", centroid_power_w: 1515, centroid_log_duration: Math.log(13.3) };
+  const chauffe = { id: 55, label: "Lave-linge · chauffe", centroid_power_w: 1990, centroid_log_duration: Math.log(5.4) };
+  const moteur = { id: 13, label: "Lave-linge · lavage (moteur)", centroid_power_w: 235, centroid_log_duration: Math.log(83.5) };
+  const session = (start: string, end: string, w: number) => ({
+    on_event_id: nextId++, off_event_id: nextId++, start_ts: start, end_ts: end,
+    power_w: w, duration_min: (Date.parse(end) - Date.parse(start)) / 60000, pct_solar: 0,
+  });
+  const ss = [
+    session("2026-11-14T09:35:06Z", "2026-11-14T09:51:40Z", 1802), // cas réel : comptée au four
+    session("2026-11-14T09:52:01Z", "2026-11-14T10:17:41Z", 1977), // 25 min : hors du rayon de la carte 55
+    session("2026-11-14T13:00:00Z", "2026-11-14T13:15:00Z", 1600), // four plus tard, machine arrêtée
+  ];
+  const now = Date.parse("2026-11-14T13:30:00Z");
+  const states = [pending!, { device: "lave_linge", ts: "2026-11-14T11:00:00Z", state: "off" }];
+  const out = clusterSessions(ss, [four, chauffe, moteur], deviceContexts(states, now)).sessions;
+  assert.deepEqual(out.map((s) => s.cluster_key), ["id:55", "id:55", "id:9"]);
+  // Le lave-vaisselle (prise) n'est pas forcé : une session hors rayon reste orpheline.
+  const lv = deviceContexts([{ device: "lave_vaisselle", ts: "2026-11-14T09:30:00Z", state: "on" }], now);
+  const lvCard = { id: 70, label: "Lave-vaisselle · chauffe", centroid_power_w: 2150, centroid_log_duration: Math.log(12) };
+  assert.equal(clusterSessions([ss[1]], [four, lvCard], lv).sessions[0].cluster_key, null);
+});
