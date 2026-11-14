@@ -1075,3 +1075,32 @@ test("départ en deux marches (PC du soir) : regroupé, apparié à l'arrêt et 
   const hot = new Map([...lvl].map(([k, v]) => [k, v + 1700]));
   assert.deepEqual(stagedStarts(events, hot), []);
 });
+
+test("lave-linge à 30 °C : brassage doux reconnu s'il est ouvert par une chauffe, pas la cuisine ni le chauffe-eau", async () => {
+  const { gentleWasherWindows, washerWindows, clusterSessions, deviceContexts } = await import("../src/lib/nilm/algorithm.ts");
+  // 14/11/2026 : brassage doux (±30 W d'un relevé à l'autre) de 13 h 55 à 16 h 05 (heure de Paris).
+  const t0 = Date.parse("2026-11-14T12:00:00Z");
+  const pts: [number, number, number | null][] = [];
+  for (let i = 0; i * 7000 < 260 * 60000; i++) {
+    const min = (i * 7) / 60;
+    const drum = min >= 55 && min < 185;
+    pts.push([t0 + i * 7000, 2000 + (drum ? (i % 2 ? 32 : 0) : i % 2 ? 4 : 0), 0]);
+  }
+  assert.deepEqual(washerWindows(pts), [], "trop doux pour la détection d'origine");
+  const session = (start: string, min: number, w: number) => ({
+    on_event_id: nextId++, off_event_id: nextId++, start_ts: start, end_ts: new Date(Date.parse(start) + min * 60000).toISOString(),
+    power_w: w, duration_min: min, pct_solar: 0,
+  });
+  const heat = session("2026-11-14T13:05:27Z", 2.3, 1899);
+  const ww = gentleWasherWindows(pts, [heat], []);
+  assert.equal(ww.length, 1);
+  assert.equal(new Date(ww[0].start).toISOString(), "2026-11-14T12:50:00.000Z");
+  assert.deepEqual(gentleWasherWindows(pts, [session("2026-11-14T13:05:27Z", 1.8, 2071)], []), [], "bouilloire : pas une ouverture de lavage");
+  assert.deepEqual(gentleWasherWindows(pts, [heat], [[Date.parse("2026-11-14T12:30:00Z"), Date.parse("2026-11-14T15:30:00Z")]]), [], "lave-vaisselle en marche");
+  // Le chauffe-eau qui chauffe pendant le lavage garde sa carte.
+  const ce = { id: 7, label: "Chauffe-eau en haut", centroid_power_w: 1677, centroid_log_duration: Math.log(157) };
+  const ll = { id: 55, label: "Lave-linge · chauffe", centroid_power_w: 1990, centroid_log_duration: Math.log(5.4) };
+  const ctx = deviceContexts([{ device: "lave_linge", ts: "2026-11-14T12:50:00Z", state: "on" }, { device: "lave_linge", ts: "2026-11-14T15:05:00Z", state: "off" }], Date.parse("2026-11-14T20:00:00Z"));
+  const out = clusterSessions([session("2026-11-14T12:54:01Z", 156, 1820), heat], [ce, ll], ctx).sessions;
+  assert.deepEqual(out.map((s) => s.cluster_key), ["id:7", "id:55"]);
+});

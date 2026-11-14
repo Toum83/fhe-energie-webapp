@@ -649,16 +649,21 @@ export type DeviceContext = {
    * à prise : leurs échelons sont déjà retirés, ce qui reste pendant leur marche est un autre appareil.
    */
   forceCard?: boolean;
+  /**
+   * Au-delà de cette durée, la session n'est pas celle de l'appareil (ni exclusive, ni forcée) :
+   * le chauffe-eau (2 h 30) qui chauffe pendant un lavage (14/11/2026) n'est pas une chauffe du lave-linge.
+   */
+  exclusiveMaxMin?: number;
 };
 
-export const CONTEXTS: { device: string; labelPrefix: string; minOnShare: number; exclusiveMinPowerW?: number; forceCard?: boolean }[] = [
+export const CONTEXTS: { device: string; labelPrefix: string; minOnShare: number; exclusiveMinPowerW?: number; forceCard?: boolean; exclusiveMaxMin?: number }[] = [
   { device: "video_proj", labelPrefix: "Vidéo proj", minOnShare: 0.5 },
   // Prises Koogeek : HA envoie « on » au-delà de 1 000 W (chauffe de l'eau), « off » sous 500 W.
   // Cas réel du 23/10/2026 : 4 chauffes de 2,2 kW (8 à 18 min) que le NILM rangeait dans le four.
   { device: "lave_vaisselle", labelPrefix: "Lave-vaisselle", minOnShare: 0.6, exclusiveMinPowerW: 800 },
   // Cas réel du 14/11/2026 : chauffe de 25 min à 1 977 W (10 h 52) hors du rayon de la carte 55
   // (chauffes de ~5 min), restée sans carte ; et les chauffes brèves de 2,1 kW de la fin de cycle.
-  { device: "lave_linge", labelPrefix: "Lave-linge", minOnShare: 0.6, exclusiveMinPowerW: 800, forceCard: true },
+  { device: "lave_linge", labelPrefix: "Lave-linge", minOnShare: 0.6, exclusiveMinPowerW: 800, forceCard: true, exclusiveMaxMin: 45 },
 ];
 
 /** Périodes « allumé » à partir des changements d'état (un état encore « on » court jusqu'à nowMs). */
@@ -677,7 +682,7 @@ export function deviceContexts(states: DeviceState[], nowMs = Date.now()): Devic
     }
     if (start != null) on.push([start, nowMs]);
     return [
-      { labelPrefix: cfg.labelPrefix, since: ss[0].ts, on, minOnShare: cfg.minOnShare, exclusiveMinPowerW: cfg.exclusiveMinPowerW, forceCard: cfg.forceCard },
+      { labelPrefix: cfg.labelPrefix, since: ss[0].ts, on, minOnShare: cfg.minOnShare, exclusiveMinPowerW: cfg.exclusiveMinPowerW, forceCard: cfg.forceCard, exclusiveMaxMin: cfg.exclusiveMaxMin },
     ];
   });
 }
@@ -829,6 +834,25 @@ export const WASHER_DRUM = {
    * 10 h 55 (0,50 kWh), alors que le cycle n'a été confirmé qu'après 6 tranches, vers 11 h 05.
    */
   pendingMinHotBlocks: 2,
+  /**
+   * Programme à 30 °C : le tambour brasse doucement (14/11/2026 après-midi, confirmé : écart médian
+   * de 20 à 40 W, 50 à 65 % des écarts dans 25–400 W, contre ~100 W et 80–90 % à 60 °C le matin).
+   * Rejeu du 31/10 au 14/11/2026 avec ces seuils (lave-vaisselle exclu) : les lavages des 04, 07, 11,
+   * 12/11 et les deux du 14/11, plus des périodes de cuisine vers 17 h (03, 04, 07, 10/11). Celles-ci
+   * sont écartées par la durée (au moins 12 tranches) et par la chauffe d'au moins 2 min à 1,6–2,7 kW
+   * qui ouvre chaque lavage (de 15 min avant à 30 min après le début du brassage ; lavages : 2,3 à
+   * 16,6 min). La cuisine du 04/11 vers 17 h (16 tranches) n'a qu'une bouilloire de 1,8 min : marge
+   * faible, une bouilloire plus longue pendant une telle période passerait. Pas d'état provisoire pour
+   * ce mode (la cuisine passerait) : la première chauffe peut aller au four le temps de la confirmation.
+   */
+  gentle: {
+    minShare: 0.4,
+    minMedianW: 18,
+    minHotBlocks: 12,
+    heatW: [1600, 2700] as [number, number],
+    heatMin: [2, 45] as [number, number],
+    heatWindowMin: [-15, 30] as [number, number],
+  },
 } as const;
 
 export type WasherWindow = { start: number; end: number; hotBlocks: number };
@@ -838,8 +862,15 @@ export type WasherWindow = { start: number; end: number; hotBlocks: number };
  * de la dernière tranche agitée : un cycle est clos quand la courbe dépasse cette fin de plus de
  * `maxGapBlocks` tranches.
  */
-export function washerWindows(points: [number, number, number | null][], minHotBlocks: number = WASHER_DRUM.minHotBlocks): WasherWindow[] {
+export function washerWindows(
+  points: [number, number, number | null][],
+  minHotBlocks: number = WASHER_DRUM.minHotBlocks,
+  /** Brassage doux : seuils de WASHER_DRUM.gentle, périodes `busy` ignorées (lave-vaisselle). */
+  gentle: { busy: [number, number][] } | null = null,
+): WasherWindow[] {
   const P = WASHER_DRUM;
+  const minShare = gentle ? P.gentle.minShare : P.minShare;
+  const minMedianW = gentle ? P.gentle.minMedianW : P.minMedianW;
   const blockMs = P.blockMin * 60000;
   const blocks = new Map<number, number[]>();
   for (let i = 1; i < points.length; i++) {
@@ -853,7 +884,8 @@ export function washerWindows(points: [number, number, number | null][], minHotB
     else blocks.set(k, [d]);
   }
   const hot = [...blocks]
-    .filter(([, d]) => d.length >= P.minPairs && d.filter((x) => x >= P.deltaW[0] && x <= P.deltaW[1]).length / d.length >= P.minShare && median(d) >= P.minMedianW)
+    .filter(([k, d]) => !gentle?.busy.some(([a, b]) => a < (k + 1) * blockMs + 600000 && b > k * blockMs - 600000))
+    .filter(([, d]) => d.length >= P.minPairs && d.filter((x) => x >= P.deltaW[0] && x <= P.deltaW[1]).length / d.length >= minShare && median(d) >= minMedianW)
     .map(([k]) => k)
     .sort((a, b) => a - b);
   const out: WasherWindow[] = [];
@@ -892,6 +924,27 @@ export function washerStates(windows: WasherWindow[], existing: DeviceState[], l
     }
   }
   return out;
+}
+
+/**
+ * Cycles à brassage doux (voir WASHER_DRUM.gentle) qui ne recouvrent pas un cycle déjà trouvé :
+ * au moins 12 tranches et une chauffe qui ouvre le lavage. `busy` : lave-vaisselle en marche.
+ */
+export function gentleWasherWindows(
+  points: [number, number, number | null][],
+  sessions: Session[],
+  busy: [number, number][],
+  known: WasherWindow[] = [],
+): WasherWindow[] {
+  const G = WASHER_DRUM.gentle;
+  const inside = (x: number, [lo, hi]: [number, number]) => x >= lo && x <= hi;
+  return washerWindows(points, G.minHotBlocks, { busy }).filter((w) => {
+    if (known.some((k) => k.start < w.end && k.end > w.start)) return false;
+    return sessions.some((s) => {
+      const lead = (ts(s.start_ts) - w.start) / 60000;
+      return s.end_ts && inside(s.power_w, G.heatW) && inside(s.duration_min, G.heatMin) && inside(lead, G.heatWindowMin);
+    });
+  });
 }
 
 /**
@@ -1005,7 +1058,8 @@ function forbidden(s: Session, c: ExistingCluster, contexts: DeviceContext[]): b
     // Carte de l'appareil, mais l'appareil était éteint pendant la session.
     if (own && share < ctx.minOnShare) return true;
     // Session expliquée par un appareil mesuré : aucune autre carte ne peut la prendre.
-    return !own && ctx.exclusiveMinPowerW != null && s.power_w >= ctx.exclusiveMinPowerW && share >= ctx.minOnShare;
+    const long = ctx.exclusiveMaxMin != null && s.duration_min > ctx.exclusiveMaxMin;
+    return !own && !long && ctx.exclusiveMinPowerW != null && s.power_w >= ctx.exclusiveMinPowerW && share >= ctx.minOnShare;
   });
 }
 
@@ -1064,7 +1118,13 @@ export function clusterSessions(
     const f = feature(s.power_w, s.duration_min);
     // Appareil sans prise allumé pendant la session (voir DeviceContext.forceCard) : sa carte la plus proche.
     const forced = contexts.find(
-      (ctx) => ctx.forceCard && ctx.exclusiveMinPowerW != null && s.power_w >= ctx.exclusiveMinPowerW && s.end_ts >= ctx.since && onShare(s, ctx) >= ctx.minOnShare,
+      (ctx) =>
+        ctx.forceCard &&
+        ctx.exclusiveMinPowerW != null &&
+        s.power_w >= ctx.exclusiveMinPowerW &&
+        !(ctx.exclusiveMaxMin != null && s.duration_min > ctx.exclusiveMaxMin) &&
+        s.end_ts >= ctx.since &&
+        onShare(s, ctx) >= ctx.minOnShare,
     );
     if (forced) {
       const own = named.filter((c) => c.label!.startsWith(forced.labelPrefix));

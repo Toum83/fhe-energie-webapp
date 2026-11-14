@@ -1,5 +1,5 @@
 import "server-only";
-import { deviceContexts, HIDDEN_START, prepareEvents, stagedStartIds, stagedStarts, stagedStartState, hiddenStarts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerPendingState, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
+import { deviceContexts, gentleWasherWindows, HIDDEN_START, prepareEvents, stagedStartIds, stagedStarts, stagedStartState, hiddenStarts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerPendingState, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
 import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, insertDeviceState, insertPowerEvent, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
@@ -16,7 +16,12 @@ export async function runClustering(housePowerW: number | null = null) {
   // sont enregistrées comme celles d'un appareil suivi (device_states), une seule fois.
   const curve = (await fetchCurve(new Date(now - 24 * 3600000).toISOString()).catch(() => null)) ?? [];
   if (curve.length) {
-    for (const st of washerStates(washerWindows(curve), states, curve[curve.length - 1][0])) {
+    const strong = washerWindows(curve);
+    // Brassage doux (programme à 30 °C), hors lave-vaisselle : ouvert par une chauffe.
+    const dishwasher = deviceContexts(states, now).find((c) => c.labelPrefix.startsWith("Lave-vaisselle"))?.on ?? [];
+    const sessionsNow = pairSessions(prepareEvents(events, states), now).sessions;
+    const windows = [...strong, ...gentleWasherWindows(curve, sessionsNow, dishwasher, strong)].sort((a, b) => a.start - b.start);
+    for (const st of washerStates(windows, states, curve[curve.length - 1][0])) {
       try {
         await insertDeviceState(st);
         states.push(st);
