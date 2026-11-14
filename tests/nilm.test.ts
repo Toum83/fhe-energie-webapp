@@ -1041,3 +1041,37 @@ test("lave-linge en cours : allumé dès 2 tranches agitées, ses chauffes vont 
   const lvCard = { id: 70, label: "Lave-vaisselle · chauffe", centroid_power_w: 2150, centroid_log_duration: Math.log(12) };
   assert.equal(clusterSessions([ss[1]], [four, lvCard], lv).sessions[0].cluster_key, null);
 });
+
+test("départ en deux marches (PC du soir) : regroupé, apparié à l'arrêt et rangé au PC", async () => {
+  const { stagedStarts, stagedStartState, prepareEvents, runPipeline } = await import("../src/lib/nilm/algorithm.ts");
+  // Cas réel du 10/11/2026 : fond ~300 W, +225 W à 21:00:57, +136 W à 21:10:03, −450 W à 21:52.
+  const T = (hm: string) => Date.parse(`2026-11-10T${hm}Z`);
+  const lvl = new Map<number, number>();
+  for (let t = T("19:30:00"); t < T("21:30:00"); t += 30000) {
+    const w = t < T("20:00:57") ? 300 : t < T("20:10:03") ? 525 : t < T("20:52:00") ? 750 : 300;
+    lvl.set(Math.floor(t / 30000), w);
+  }
+  const e = (id: number, hm: string, d: number, before: number): PowerEvent => ({
+    id, ts: `2026-11-10T${hm}Z`, delta_w: d, direction: d > 0 ? "on" : "off", production_power: 0, power_before: before, power_after: before + d,
+  });
+  const events = [e(1, "20:00:57", 225, 300), e(2, "20:10:03", 136, 525), e(3, "20:52:00", -450, 750)];
+  const found = stagedStarts(events, lvl);
+  assert.equal(found.length, 1);
+  assert.deepEqual(found[0].ids, [1, 2]);
+  assert.ok(Math.abs(found[0].rise - 450) <= 20);
+  assert.deepEqual(stagedStarts(events, lvl, new Set([1, 2])), [], "déjà regroupé : rien");
+  const states = [stagedStartState(found[0])];
+  const prepared = prepareEvents(events, states);
+  assert.deepEqual(prepared.map((x) => [x.id, x.direction, Math.round(x.delta_w)]), [[1, "on", 450], [3, "off", -450]]);
+  const pc = { id: 186, label: "PC Lenny", centroid_power_w: 279, centroid_log_duration: Math.log(170) };
+  const out = runPipeline(events, [pc], Date.parse("2026-11-11T00:00:00Z"), [], states).sessions;
+  assert.equal(out.length, 1);
+  assert.equal(out[0].cluster_key, "id:186", "450 W : hors du rayon de la carte, rangé par la règle");
+  // Une montée qui ne tient pas (cuisine) ou trop faible n'est pas un départ.
+  const shortLvl = new Map(lvl);
+  for (let t = T("20:20:00"); t < T("20:45:00"); t += 30000) shortLvl.set(Math.floor(t / 30000), 330);
+  assert.deepEqual(stagedStarts(events, shortLvl), []);
+  // Sous une grosse chauffe, les à-coups ne sont pas des marches.
+  const hot = new Map([...lvl].map(([k, v]) => [k, v + 1700]));
+  assert.deepEqual(stagedStarts(events, hot), []);
+});

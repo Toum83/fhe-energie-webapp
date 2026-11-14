@@ -1,5 +1,5 @@
 import "server-only";
-import { deviceContexts, HIDDEN_START, hiddenStarts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerPendingState, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
+import { deviceContexts, HIDDEN_START, prepareEvents, stagedStartIds, stagedStarts, stagedStartState, hiddenStarts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerPendingState, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
 import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, insertDeviceState, insertPowerEvent, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
@@ -29,9 +29,22 @@ export async function runClustering(housePowerW: number | null = null) {
     const pending = washerPendingState(curve, states);
     if (pending) states.push(pending);
   }
+  // Départs en deux marches (PC) : regroupés une fois, la marque garde le regroupement au-delà des 24 h.
+  if (curve.length) {
+    const levels = houseLevels(curve, states);
+    for (const g of stagedStarts(subtractPlugs(mergeEvents(events), states), levels, stagedStartIds(states))) {
+      const st = stagedStartState(g);
+      try {
+        await insertDeviceState(st);
+        states.push(st);
+      } catch {
+        // pas enregistré : retenté au prochain passage
+      }
+    }
+  }
   // Sessions impossibles au vu de la courbe : marquées une fois, puis écartées à chaque calcul.
   if (curve.length) {
-    const candidates = pairSessions(subtractPlugs(mergeEvents(events), states), now).sessions;
+    const candidates = pairSessions(prepareEvents(events, states), now).sessions;
     const byId = new Map(candidates.map((c) => [c.on_event_id, c]));
     for (const id of implausibleSessions(candidates, houseLevels(curve, states), rejectedSessionIds(states), deviceContexts(states, now))) {
       const st: DeviceState = { device: PLAUSIBLE.device, ts: byId.get(id)!.start_ts, state: String(id) };
@@ -47,7 +60,7 @@ export async function runClustering(housePowerW: number | null = null) {
     const rejected = rejectedSessionIds(states);
     const admitted = candidates.filter((c) => !rejected.has(c.on_event_id));
     const done = new Set(states.filter((s) => s.device === HIDDEN_START.device).map((s) => Number(s.state)));
-    const merged = subtractPlugs(mergeEvents(events), states);
+    const merged = prepareEvents(events, states);
     let added = 0;
     for (const h of hiddenStarts(merged, admitted, houseLevels(curve, states), done)) {
       try {
@@ -71,7 +84,7 @@ export async function runClustering(housePowerW: number | null = null) {
   });
   // Appareils longs encore en marche, pour faire avancer les compteurs HA pendant la chauffe.
   // Prises mesurées retirées, des échelons comme de la puissance actuelle de la maison.
-  const merged = subtractPlugs(mergeEvents(events), states);
+  const merged = prepareEvents(events, states);
   const plugsNow = [...new Set(states.filter((s) => s.device.startsWith(PLUG_PREFIX)).map((s) => s.device))]
     .map((d) => Number(states.filter((s) => s.device === d).at(-1)?.state))
     .filter(Number.isFinite)

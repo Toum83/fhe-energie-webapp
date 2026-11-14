@@ -1009,7 +1009,13 @@ function forbidden(s: Session, c: ExistingCluster, contexts: DeviceContext[]): b
   });
 }
 
-export function clusterSessions(sessions: Session[], existing: ExistingCluster[], contexts: DeviceContext[] = []): Omit<ClusteringResult, "stats"> {
+export function clusterSessions(
+  sessions: Session[],
+  existing: ExistingCluster[],
+  contexts: DeviceContext[] = [],
+  /** on_event_id des départs en marches (voir STAGED_START). */
+  staged: Set<number> = new Set(),
+): Omit<ClusteringResult, "stats"> {
   const named = existing.filter((c) => c.label && c.label.trim() !== "");
   const unnamed = existing.filter((c) => !c.label || c.label.trim() === "");
 
@@ -1030,7 +1036,14 @@ export function clusterSessions(sessions: Session[], existing: ExistingCluster[]
   const washer = washerCycleSessions(sessions);
   const washerCard = named.find((c) => c.label!.startsWith(WASHER_CYCLE.labelPrefix));
   const towelCard = named.find((c) => c.label!.startsWith(MORNING_TOWEL.labelPrefix));
+  const stagedCards = named.filter((c) => c.label!.startsWith(STAGED_START.labelPrefix));
   sessions.forEach((s, i) => {
+    if (stagedCards.length && staged.has(s.on_event_id) && s.end_ts && !contexts.some((ctx) => onShare(s, ctx) >= 0.5)) {
+      const f0 = feature(s.power_w, s.duration_min);
+      const c = stagedCards.reduce((b, c) => (dist(f0, centroidOf(c)) < dist(f0, centroidOf(b)) ? c : b));
+      assignment[i] = `id:${c.id}`;
+      return;
+    }
     if (towelCard && isMorningTowel(s)) {
       assignment[i] = `id:${towelCard.id}`;
       return;
@@ -1490,6 +1503,117 @@ export function hiddenStarts(merged: PowerEvent[], sessions: Session[], levels: 
   return out;
 }
 
+/**
+ * Départ en deux marches : le PC de Lenny démarre souvent par +100 à +300 W, puis prend encore
+ * +130 à +230 W quelques minutes plus tard (jeu lancé), et s'arrête d'un seul coup (−350 à −490 W).
+ * Aucun des deux échelons n'a la taille de l'arrêt : la séance n'était pas appariée. Semaine du 07
+ * au 13/11/2026 : NILM 4 h 40 de PC pour 22 h 43 d'écran (rapport Microsoft Family), départs vers
+ * 21 h 00 les 08, 09, 10, 12 et 13/11. Les marches sont regroupées en un seul départ, de la hauteur
+ * réellement prise par la courbe, qui s'apparie ensuite normalement. La règle ne regarde pas l'heure.
+ * Les faux départs du soir (cuisine, 17 h 20) montent moins et ne tiennent pas.
+ */
+export const STAGED_START = {
+  /** device_states : une marque par départ regroupé (state = "id,id,…|hauteur|niveau avant"). */
+  device: "nilm:marches",
+  /**
+   * Carte qui reçoit ces séances : le PC monte à ~400 W en jeu le soir, loin du centre de sa carte
+   * (~280 W), et formait une carte sans nom. Pas si un appareil suivi (projecteur…) tournait.
+   */
+  labelPrefix: "PC Lenny",
+  /** Sous une grosse chauffe (chauffe-eau), les à-coups de la chauffe passent pour des marches. */
+  maxBeforeW: 1000,
+  stepW: [80, 350] as [number, number],
+  maxSpanMin: 15,
+  riseW: [250, 600] as [number, number],
+  beforeMin: 5,
+  afterMin: 10,
+  /** Le niveau doit tenir au-dessus de avant + holdShare × hauteur, de afterMin à holdMin. */
+  holdMin: 30,
+  holdShare: 0.6,
+  /** Les marches doivent expliquer la montée (pas une dérive lente du fond). */
+  stepsShare: [0.6, 1.6] as [number, number],
+  minBins: 4,
+} as const;
+
+export type StagedStart = { ids: number[]; ts: string; rise: number; before: number };
+
+/** Départs en deux marches visibles sur `levels` (événements de `done` ignorés). */
+export function stagedStarts(merged: PowerEvent[], levels: Map<number, number>, done: Set<number> = new Set()): StagedStart[] {
+  const P = STAGED_START;
+  const stepMs = PLAUSIBLE.stepS * 1000;
+  const lv = (a: number, b: number) => {
+    const v: number[] = [];
+    for (let k = Math.floor(a / stepMs); k <= Math.floor(b / stepMs); k++) {
+      const x = levels.get(k);
+      if (x != null) v.push(x);
+    }
+    return v;
+  };
+  const isStep = (e: PowerEvent) => e.direction === "on" && e.delta_w >= P.stepW[0] && e.delta_w <= P.stepW[1] && isFine(e.ts) && !done.has(e.id);
+  const out: StagedStart[] = [];
+  const used = new Set<number>();
+  for (let i = 0; i < merged.length; i++) {
+    const e1 = merged[i];
+    if (used.has(e1.id) || !isStep(e1)) continue;
+    const t1 = ts(e1.ts);
+    // Deuxième marche : l'échelon qui suit immédiatement (un échelon entre les deux, c'est un autre appareil).
+    const j = i + 1;
+    const e2 = merged[j];
+    if (!e2 || ts(e2.ts) > t1 + P.maxSpanMin * 60000 || !isStep(e2) || used.has(e2.id)) continue;
+    const t2 = ts(e2.ts);
+    const group = merged.slice(i, j + 1);
+    if (group.some((e) => done.has(e.id))) continue;
+    const b = lv(t1 - P.beforeMin * 60000, t1 - stepMs);
+    const a = lv(t2 + 60000, t2 + P.afterMin * 60000);
+    const h = lv(t2 + P.afterMin * 60000, t2 + P.holdMin * 60000);
+    if (b.length < P.minBins || a.length < P.minBins || h.length < P.minBins) continue;
+    const before = median(b);
+    if (before > P.maxBeforeW) continue;
+    const rise = median(a) - before;
+    if (rise < P.riseW[0] || rise > P.riseW[1]) continue;
+    const steps = e1.delta_w + e2.delta_w;
+    if (steps < P.stepsShare[0] * rise || steps > P.stepsShare[1] * rise) continue;
+    if (median(h) < before + P.holdShare * rise) continue;
+    group.forEach((e) => used.add(e.id));
+    out.push({ ids: group.map((e) => e.id), ts: e1.ts, rise: Math.round(rise), before: Math.round(before) });
+  }
+  return out;
+}
+
+/** Marque device_states d'un départ regroupé. */
+export function stagedStartState(s: StagedStart): DeviceState {
+  return { device: STAGED_START.device, ts: s.ts, state: `${s.ids.join(",")}|${s.rise}|${s.before}` };
+}
+
+/** Ids d'événements déjà regroupés. */
+export function stagedStartIds(states: DeviceState[]): Set<number> {
+  return new Set(states.filter((s) => s.device === STAGED_START.device).flatMap((s) => s.state.split("|")[0].split(",").map(Number)));
+}
+
+/** Remplace les marches enregistrées par un seul départ (id et heure de la première marche). */
+export function applyStagedStarts(merged: PowerEvent[], states: DeviceState[]): PowerEvent[] {
+  const marks = states.filter((s) => s.device === STAGED_START.device);
+  if (!marks.length) return merged;
+  const replace = new Map<number, PowerEvent>();
+  const drop = new Set<number>();
+  const byId = new Map(merged.map((e) => [e.id, e]));
+  for (const m of marks) {
+    const [idsRaw, riseRaw, beforeRaw] = m.state.split("|");
+    const ids = idsRaw.split(",").map(Number);
+    const first = byId.get(ids[0]);
+    const rise = Number(riseRaw), before = Number(beforeRaw);
+    if (!first || !Number.isFinite(rise) || !ids.slice(1).every((id) => byId.has(id))) continue;
+    replace.set(first.id, { ...first, direction: "on", delta_w: rise, power_before: before, power_after: before + rise });
+    ids.slice(1).forEach((id) => drop.add(id));
+  }
+  return merged.filter((e) => !drop.has(e.id)).map((e) => replace.get(e.id) ?? e);
+}
+
+/** Échelons de la maison prêts à apparier : fusionnés, prises retirées, départs en marches regroupés. */
+export function prepareEvents(events: PowerEvent[], states: DeviceState[]): PowerEvent[] {
+  return applyStagedStarts(subtractPlugs(mergeEvents(events), states), states);
+}
+
 /** on_event_id déjà rejetés, relus dans device_states. */
 export function rejectedSessionIds(states: DeviceState[]): Set<number> {
   return new Set(states.filter((s) => s.device === PLAUSIBLE.device).map((s) => Number(s.state)).filter(Number.isFinite));
@@ -1565,13 +1689,14 @@ export function runPipeline(
   contexts: DeviceContext[] = [],
   states: DeviceState[] = [],
 ): ClusteringResult {
-  const merged = subtractPlugs(mergeEvents(events), states);
+  const merged = prepareEvents(events, states);
   const paired = pairSessions(merged, nowMs);
   // Sessions jugées impossibles au vu de la courbe (voir PLAUSIBLE) : ni carte, ni compteur.
   const rejected = rejectedSessionIds(states);
   const sessions = rejected.size ? paired.sessions.filter((s) => !rejected.has(s.on_event_id)) : paired.sessions;
   const unpaired = paired.unpaired;
-  const clustered = clusterSessions(sessions, existing, contexts);
+  const staged = new Set(states.filter((s) => s.device === STAGED_START.device).map((s) => Number(s.state.split(",")[0].split("|")[0])));
+  const clustered = clusterSessions(sessions, existing, contexts, staged);
   const noise = clustered.sessions.filter((s) => s.cluster_key == null).length;
   return {
     sessions: clustered.sessions,
