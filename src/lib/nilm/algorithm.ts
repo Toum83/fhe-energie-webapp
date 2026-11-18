@@ -844,14 +844,17 @@ export const WASHER_DRUM = {
    * 16,6 min). La cuisine du 04/11 vers 17 h (16 tranches) n'a qu'une bouilloire de 1,8 min : marge
    * faible, une bouilloire plus longue pendant une telle période passerait. Pas d'état provisoire pour
    * ce mode (la cuisine passerait) : la première chauffe peut aller au four le temps de la confirmation.
+   * Assoupli le 18/11/2026 (lavage du matin, brassage de 25 à 40 % des écarts, médiane 12–20 W, resté
+   * invisible) : part 0,25, médiane 10 W, chauffe jusqu'à 60 min après le début (une fenêtre plus
+   * large commence plus tôt). Rejeu du 31/10 au 18/11 : les 6 lavages connus, aucune autre période.
    */
   gentle: {
-    minShare: 0.4,
-    minMedianW: 18,
+    minShare: 0.25,
+    minMedianW: 10,
     minHotBlocks: 12,
     heatW: [1600, 2700] as [number, number],
     heatMin: [2, 45] as [number, number],
-    heatWindowMin: [-15, 30] as [number, number],
+    heatWindowMin: [-15, 60] as [number, number],
   },
 } as const;
 
