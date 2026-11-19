@@ -182,7 +182,17 @@ export const PARAMS = {
   minStepW: 200,
 } as const;
 
-const ts = (iso: string) => new Date(iso).getTime();
+/** Horodatage en ms, mémorisé : le même ISO est relu des milliers de fois par calcul (coût CPU Vercel). */
+const tsCache = new Map<string, number>();
+const ts = (iso: string) => {
+  let v = tsCache.get(iso);
+  if (v === undefined) {
+    v = new Date(iso).getTime();
+    if (tsCache.size > 200_000) tsCache.clear();
+    tsCache.set(iso, v);
+  }
+  return v;
+};
 
 /** Recouvrement de deux sessions, en part de la plus courte (0 si l'une est encore ouverte). */
 function overlapShare(a: Session, b: Session): number {
@@ -270,9 +280,18 @@ export function mergeEvents(events: PowerEvent[]): PowerEvent[] {
 function solarSwingAt(merged: PowerEvent[], j: number): boolean {
   const t = ts(merged[j].ts);
   if (!isFine(merged[j].ts)) return false;
-  const near = merged.filter((e) => Math.abs(ts(e.ts) - t) <= PARAMS.solarDipSwingMin * 60000 && e.production_power != null);
-  const prods = near.map((e) => e.production_power!);
-  return prods.length > 0 && Math.max(...prods) - Math.min(...prods) >= PARAMS.solarDipSwingW;
+  // merged est trié par date : on ne parcourt que les voisins dans la fenêtre (avant : toute la liste
+  // à chaque appel, la moitié du CPU du calcul en novembre 2026).
+  const win = PARAMS.solarDipSwingMin * 60000;
+  let lo = Infinity, hi = -Infinity;
+  const take = (e: PowerEvent) => {
+    if (e.production_power == null) return;
+    lo = Math.min(lo, e.production_power);
+    hi = Math.max(hi, e.production_power);
+  };
+  for (let k = j; k >= 0 && t - ts(merged[k].ts) <= win; k--) if (Math.abs(ts(merged[k].ts) - t) <= win) take(merged[k]);
+  for (let k = j + 1; k < merged.length && ts(merged[k].ts) - t <= win; k++) if (Math.abs(ts(merged[k].ts) - t) <= win) take(merged[k]);
+  return hi >= lo && hi - lo >= PARAMS.solarDipSwingW;
 }
 
 /**
@@ -527,10 +546,18 @@ function median(values: number[]): number {
 }
 
 /** Minute du jour (0..1439), heure de Paris. */
+let parisFormat: Intl.DateTimeFormat | null = null;
+const minuteCache = new Map<string, number>();
 export function localMinute(iso: string): number {
-  const parts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: PARAMS.timeZone }).formatToParts(new Date(iso));
+  let v = minuteCache.get(iso);
+  if (v !== undefined) return v;
+  parisFormat ??= new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: PARAMS.timeZone });
+  const parts = parisFormat.formatToParts(new Date(iso));
   const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
-  return (get("hour") % 24) * 60 + get("minute");
+  v = (get("hour") % 24) * 60 + get("minute");
+  if (minuteCache.size > 200_000) minuteCache.clear();
+  minuteCache.set(iso, v);
+  return v;
 }
 
 /**
@@ -553,8 +580,7 @@ export function usualStartMinute(startIsos: string[]): number | null {
 }
 
 function localHour(iso: string): number {
-  const parts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone: PARAMS.timeZone }).formatToParts(new Date(iso));
-  return Number(parts.find((p) => p.type === "hour")?.value ?? 0) % 24;
+  return Math.floor(localMinute(iso) / 60);
 }
 
 /**
