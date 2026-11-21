@@ -298,6 +298,13 @@ test("appareil long en marche : compté au fur et à mesure, seulement s'il n'y 
     { id: nextId++, ts: new Date(now(150)).toISOString(), delta_w: -1758, direction: "off", production_power: 0, power_before: 2018, power_after: 260 },
   ]);
   assert.deepEqual(runningSessions(closed, pairSessions(closed).sessions, named, now(160)), []);
+  // Démarrage pendant une machine (prise du lave-linge allumée) : pas compté tant que ce peut être
+  // sa chauffe, compté au-delà de sa plus longue chauffe (19/11/2026).
+  const washer = [{ labelPrefix: "Lave-linge", since: start, on: [[now(-30), now(150)]] as [number, number][], minOnShare: 0.6, exclusiveMinPowerW: 800, forceCard: true, exclusiveMaxMin: 45 }];
+  assert.deepEqual(runningSessions(merged, sessions, named, now(40), null, washer), [], "peut être la chauffe du lave-linge");
+  assert.equal(runningSessions(merged, sessions, named, now(50), null, washer)[0]?.cluster_id, 7);
+  const noMax = [{ ...washer[0], exclusiveMaxMin: undefined }];
+  assert.deepEqual(runningSessions(merged, sessions, named, now(50), null, noMax), [], "lave-vaisselle : exclu tant qu'il tourne");
 });
 
 test("bilan : les cartes « Famille · détail » sont additionnées, les autres restent seules", async () => {

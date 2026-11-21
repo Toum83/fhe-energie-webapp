@@ -1733,10 +1733,17 @@ export function runningSessions(
   // Démarrage pendant une chauffe mesurée par une prise (lave-linge, lave-vaisselle) : c'est
   // elle, pas un appareil NILM. Cas réel du 24/10/2026 : chauffe du lave-linge à 17 h comptée
   // 1,4 kWh en direct comme chauffe-eau (barre négative dans HA).
-  const measured = (iso: string) => {
+  // Sauf au-delà de la plus longue chauffe de cette machine (exclusiveMaxMin, comme au rangement
+  // en carte) : ce n'est plus elle. Cas réel du 19/11/2026 : chauffe-eau du haut démarré à 13 h 58
+  // pendant une machine (13 h 30 → 16 h 30), compté en direct 35 min puis plus du tout, et rien à
+  // l'arrêt (séance suivie en direct) : 1,1 kWh chez HA au lieu de 4,4.
+  const measured = (iso: string, elapsedMin: number) => {
     const t = ts(iso);
     return contexts.some(
-      (ctx) => ctx.exclusiveMinPowerW != null && ctx.on.some(([a, b]) => t >= a - 120000 && t <= b),
+      (ctx) =>
+        ctx.exclusiveMinPowerW != null &&
+        !(ctx.exclusiveMaxMin != null && elapsedMin > ctx.exclusiveMaxMin) &&
+        ctx.on.some(([a, b]) => t >= a - 120000 && t <= b),
     );
   };
   const long = named.filter((c) => c.avg_duration_min >= RUNNING.minClusterDurationMin);
@@ -1744,8 +1751,8 @@ export function runningSessions(
   for (let i = 0; i < merged.length; i++) {
     const on = merged[i];
     if (on.direction !== "on" || on.delta_w < PARAMS.levelPairMinW || paired.has(on.id)) continue;
-    if (measured(on.ts)) continue;
     const elapsedMin = (nowMs - ts(on.ts)) / 60000;
+    if (measured(on.ts, elapsedMin)) continue;
     if (elapsedMin < 0 || elapsedMin * 60 > PARAMS.pairWindowS) continue;
     const nominal = revealedPowerW(merged, i, merged.length) ?? on.delta_w;
     const matches = long.filter(
