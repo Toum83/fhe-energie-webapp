@@ -1113,6 +1113,12 @@ test("départ en deux marches (PC du soir) : regroupé, apparié à l'arrêt et 
   const paired = runPipeline(big, [pc], Date.parse("2026-11-11T00:00:00Z"), [], bigStates).sessions.find((x) => x.on_event_id === 10);
   assert.equal(paired?.end_ts, big[2].ts);
   assert.equal(paired?.power_w, 320);
+  // Arrêt noyé dans celui d'une impulsion du four (25/11/2026 : −2 671 W au lieu de −2 200 W).
+  const oven = [e(20, "20:00:18", 284, 276), e(21, "21:39:56", 2290, 440), e(22, "21:40:24", -2671, 2730)];
+  oven[2].power_after = 160;
+  const ovenOut = runPipeline(oven, [pc], Date.parse("2026-11-11T00:00:00Z"), [], [{ device: "nilm:marches", ts: oven[0].ts, state: "20|284|276" }]).sessions;
+  assert.equal(ovenOut.find((x) => x.on_event_id === 20)?.end_ts, oven[2].ts);
+  assert.ok(ovenOut.some((x) => x.on_event_id === 21), "l'impulsion garde son arrêt");
 });
 
 test("lave-linge à 30 °C : brassage doux reconnu s'il est ouvert par une chauffe, pas la cuisine ni le chauffe-eau", async () => {

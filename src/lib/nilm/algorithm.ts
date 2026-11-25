@@ -440,8 +440,10 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
       for (let j = i + 1; j < merged.length; j++) {
         const off = merged[j];
         if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
-        if (off.direction !== "off" || used.has(j) || takenElsewhere(j, i)) continue;
+        if (off.direction !== "off" || used.has(j)) continue;
         if (remaining.has(j) && left(j) < (1 - PARAMS.levelRelTol) * on.delta_w) continue;
+        // Arrêt réservé à une impulsion (four) : utilisable s'il contient nettement plus qu'elle.
+        if (takenElsewhere(j, i) && left(j) - merged[reservedBy.get(j)!].delta_w < (1 - PARAMS.pairRelTol) * on.delta_w) continue;
         if (off.power_after != null && off.power_after <= ceiling) {
           best = { err: 0, j };
           levelStaged = true;
