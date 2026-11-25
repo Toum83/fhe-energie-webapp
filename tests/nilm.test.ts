@@ -1093,6 +1093,19 @@ test("départ en deux marches (PC du soir) : regroupé, apparié à l'arrêt et 
   // Sous une grosse chauffe, les à-coups ne sont pas des marches.
   const hot = new Map([...lvl].map(([k, v]) => [k, v + 1700]));
   assert.deepEqual(stagedStarts(events, hot), []);
+  // Une seule marche (projecteur allumé avec le PC, sa marche retirée par la prise) : reconnue à
+  // l'heure du PC du soir seulement (23/11/2026 : +260 W à 21:00, montée ~430 W).
+  const one = [e(1, "20:00:57", 300, 300), e(3, "20:52:00", -450, 750)];
+  const oneLvl = new Map<number, number>();
+  for (let t = T("19:30:00"); t < T("21:30:00"); t += 30000) oneLvl.set(Math.floor(t / 30000), t < T("20:00:57") ? 300 : t < T("20:52:00") ? 750 : 300);
+  assert.deepEqual(stagedStarts(one, oneLvl).map((x) => x.ids), [[1]]);
+  const shift = (ms: number) => ({ ev: one.map((x) => ({ ...x, ts: new Date(Date.parse(x.ts) - ms).toISOString() })), lv: new Map([...oneLvl].map(([k, v]) => [k - ms / 30000, v])) });
+  const afternoon = shift(4 * 3600000);
+  assert.deepEqual(stagedStarts(afternoon.ev, afternoon.lv), [], "17 h : une marche seule n'est pas le PC");
+  // Projecteur allumé (mesuré par sa prise) : la séance reste au PC.
+  const proj = [{ labelPrefix: "Vidéo proj", since: "2026-11-01", on: [[T("20:00:00"), T("21:00:00")]] as [number, number][], minOnShare: 0.5 }];
+  const withProj = runPipeline(events, [pc], Date.parse("2026-11-11T00:00:00Z"), proj, states).sessions;
+  assert.equal(withProj[0].cluster_key, "id:186");
 });
 
 test("lave-linge à 30 °C : brassage doux reconnu s'il est ouvert par une chauffe, pas la cuisine ni le chauffe-eau", async () => {

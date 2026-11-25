@@ -1121,7 +1121,9 @@ export function clusterSessions(
   const towelCard = named.find((c) => c.label!.startsWith(MORNING_TOWEL.labelPrefix));
   const stagedCards = named.filter((c) => c.label!.startsWith(STAGED_START.labelPrefix));
   sessions.forEach((s, i) => {
-    if (stagedCards.length && staged.has(s.on_event_id) && s.end_ts && !contexts.some((ctx) => onShare(s, ctx) >= 0.5)) {
+    // Le projecteur ne compte plus : il est mesuré par la prise du coin cinéma (01/11/2026) et
+    // retiré des échelons, et Lenny l'allume avec son PC le soir (23/11/2026).
+    if (stagedCards.length && staged.has(s.on_event_id) && s.end_ts && !contexts.some((ctx) => !ctx.labelPrefix.startsWith("Vidéo proj") && onShare(s, ctx) >= 0.5)) {
       const f0 = feature(s.power_w, s.duration_min);
       const c = stagedCards.reduce((b, c) => (dist(f0, centroidOf(c)) < dist(f0, centroidOf(b)) ? c : b));
       assignment[i] = `id:${c.id}`;
@@ -1622,6 +1624,13 @@ export const STAGED_START = {
   /** Les marches doivent expliquer la montée (pas une dérive lente du fond). */
   stepsShare: [0.6, 1.6] as [number, number],
   minBins: 4,
+  /**
+   * Départ en une seule marche, seulement à l'heure du PC du soir (heure de Paris, en minutes).
+   * Depuis le 23/11/2026 le vidéoprojecteur s'allume avec le PC vers 21 h : sa marche, mesurée par
+   * la prise du coin cinéma, est retirée, et il ne reste qu'une marche (+200 à +280 W) suivie de la
+   * montée du jeu. Trois soirs de PC (23, 24, 25/11) restés sans carte.
+   */
+  singleWindowMin: [20 * 60 + 30, 21 * 60 + 30] as [number, number],
 } as const;
 
 export type StagedStart = { ids: number[]; ts: string; rise: number; before: number };
@@ -1648,9 +1657,11 @@ export function stagedStarts(merged: PowerEvent[], levels: Map<number, number>, 
     // Deuxième marche : l'échelon qui suit immédiatement (un échelon entre les deux, c'est un autre appareil).
     const j = i + 1;
     const e2 = merged[j];
-    if (!e2 || ts(e2.ts) > t1 + P.maxSpanMin * 60000 || !isStep(e2) || used.has(e2.id)) continue;
-    const t2 = ts(e2.ts);
-    const group = merged.slice(i, j + 1);
+    const two = !!e2 && ts(e2.ts) <= t1 + P.maxSpanMin * 60000 && isStep(e2) && !used.has(e2.id);
+    const minute = localMinute(e1.ts);
+    if (!two && (minute < P.singleWindowMin[0] || minute > P.singleWindowMin[1])) continue;
+    const t2 = two ? ts(e2.ts) : t1;
+    const group = two ? merged.slice(i, j + 1) : [e1];
     if (group.some((e) => done.has(e.id))) continue;
     const b = lv(t1 - P.beforeMin * 60000, t1 - stepMs);
     const a = lv(t2 + 60000, t2 + P.afterMin * 60000);
@@ -1660,7 +1671,7 @@ export function stagedStarts(merged: PowerEvent[], levels: Map<number, number>, 
     if (before > P.maxBeforeW) continue;
     const rise = median(a) - before;
     if (rise < P.riseW[0] || rise > P.riseW[1]) continue;
-    const steps = e1.delta_w + e2.delta_w;
+    const steps = group.reduce((acc, e) => acc + e.delta_w, 0);
     if (steps < P.stepsShare[0] * rise || steps > P.stepsShare[1] * rise) continue;
     if (median(h) < before + P.holdShare * rise) continue;
     group.forEach((e) => used.add(e.id));
