@@ -1,5 +1,5 @@
 import "server-only";
-import { deviceContexts, gentleWasherWindows, HIDDEN_START, prepareEvents, stagedStartIds, stagedStarts, stagedStartState, hiddenStarts, houseLevels, housePowerNow, implausibleSessions, mergeEvents, PLAUSIBLE, rejectedSessionIds, washerPendingState, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
+import { deviceContexts, gentleWasherWindows, HIDDEN_START, prepareEvents, stagedStartIds, stagedStarts, stagedStartState, hiddenStarts, houseLevels, housePowerNow, implausibleSessions, liftedSessionIds, mergeEvents, PLAUSIBLE, REJECT_LIFT, rejectedSessionIds, rejectionsToLift, washerPendingState, washerStates, washerWindows, pairSessions, PARAMS, PLUG_PREFIX, runningSessions, runPipeline, subtractPlugs, usualStartMinute, type DeviceState, type RunningSession } from "./algorithm";
 import { fetchClusters, fetchCurve, fetchDeviceStates, fetchEvents, insertDeviceState, insertPowerEvent, saveClustering } from "./db";
 
 /** Recalcule sessions et clusters depuis tous les événements ; les clusters nommés sont préservés. */
@@ -51,7 +51,20 @@ export async function runClustering(housePowerW: number | null = null) {
   if (curve.length) {
     const candidates = pairSessions(prepareEvents(events, states), now).sessions;
     const byId = new Map(candidates.map((c) => [c.on_event_id, c]));
-    for (const id of implausibleSessions(candidates, houseLevels(curve, states), rejectedSessionIds(states), deviceContexts(states, now))) {
+    const levels = houseLevels(curve, states);
+    const contexts = deviceContexts(states, now);
+    // Rejets récents revérifiés sur la courbe complète : levés s'ils ne tiennent plus.
+    for (const id of rejectionsToLift(candidates, levels, states, contexts, now)) {
+      const st: DeviceState = { device: REJECT_LIFT.device, ts: byId.get(id)!.start_ts, state: String(id) };
+      try {
+        await insertDeviceState(st);
+        states.push(st);
+      } catch {
+        // pas enregistré : revérifié au prochain passage
+      }
+    }
+    const lifted = liftedSessionIds(states);
+    for (const id of implausibleSessions(candidates, levels, rejectedSessionIds(states), contexts).filter((x) => !lifted.has(x))) {
       const st: DeviceState = { device: PLAUSIBLE.device, ts: byId.get(id)!.start_ts, state: String(id) };
       try {
         await insertDeviceState(st);

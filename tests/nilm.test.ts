@@ -678,6 +678,18 @@ test("plausibilité : la somme des sessions en cours ne dépasse pas la maison a
   const events = [ev(10, 10, 1500), ev(11, 25, -1500)];
   assert.equal(runPipeline(events, [], t0 + 3600000).sessions.length, 1);
   assert.equal(runPipeline(events, [], t0 + 3600000, [], [{ device: PLAUSIBLE.device, ts: events[0].ts, state: "10" }]).sessions.length, 0);
+  // Rejets réexaminés (20/11/2026) : l'appareil réel rejeté à tort est levé, le fantôme non ;
+  // pas avant 1 h après sa fin, ni au-delà de 24 h ; une levée est définitive.
+  const { rejectionsToLift, rejectedSessionIds, REJECT_LIFT } = await import("../src/lib/nilm/algorithm.ts");
+  const marks = [{ device: PLAUSIBLE.device, ts: real.start_ts, state: "2" }, { device: PLAUSIBLE.device, ts: ghost.start_ts, state: "3" }];
+  const at = (min: number) => t0 + min * 60000;
+  assert.deepEqual(rejectionsToLift([heater, real, ghost], levels, marks, [], at(200)), [], "fins trop récentes : données pas encore posées");
+  assert.deepEqual(rejectionsToLift([heater, real], levels, marks, [], at(245)), [2]);
+  assert.deepEqual(rejectionsToLift([heater, ghost], levels, marks, [], at(300)), [], "le fantôme reste rejeté");
+  assert.deepEqual(rejectionsToLift([heater, real], levels, marks, [], at(150 + 25 * 60)), [], "trop vieux : plus réexaminé");
+  const liftedMarks = [...marks, { device: REJECT_LIFT.device, ts: real.start_ts, state: "2" }];
+  assert.deepEqual([...rejectedSessionIds(liftedMarks)], [3]);
+  assert.equal(runPipeline(events, [], t0 + 3600000, [], [{ device: PLAUSIBLE.device, ts: events[0].ts, state: "10" }, { device: REJECT_LIFT.device, ts: events[0].ts, state: "10" }]).sessions.length, 1);
 });
 
 test("sèche-serviettes du matin : la carte ne prend que les blocs démarrés entre 5 h 30 et 6 h 45", async () => {

@@ -1703,9 +1703,60 @@ export function prepareEvents(events: PowerEvent[], states: DeviceState[]): Powe
   return applyStagedStarts(subtractPlugs(mergeEvents(events), states), states);
 }
 
-/** on_event_id déjà rejetés, relus dans device_states. */
+/** on_event_id déjà rejetés, relus dans device_states (sauf rejets levés depuis). */
 export function rejectedSessionIds(states: DeviceState[]): Set<number> {
-  return new Set(states.filter((s) => s.device === PLAUSIBLE.device).map((s) => Number(s.state)).filter(Number.isFinite));
+  const lifted = liftedSessionIds(states);
+  return new Set(
+    states
+      .filter((s) => s.device === PLAUSIBLE.device)
+      .map((s) => Number(s.state))
+      .filter((id) => Number.isFinite(id) && !lifted.has(id)),
+  );
+}
+
+/**
+ * Rejets réexaminés. Un rejet est décidé une fois, parfois sur des données encore provisoires
+ * (échelons arrivés en retard, appariement provisoire). Cas réel du 20/11/2026 : PC de Lenny
+ * 11 h → 13 h 44 (264 W, réel) compté 0,72 kWh chez HA puis rejeté ; rejoué sur la courbe complète,
+ * il passe le contrôle. Tant que la séance a moins de `maxAgeH` (la courbe la couvre encore) et
+ * qu'elle est finie depuis `minAgeMin` (données posées), son rejet est revérifié à chaque calcul
+ * et levé si elle passe. Une levée est définitive (pas de va-et-vient). Un rejet qui tient au-delà
+ * de 24 h retire à HA ce qui avait été compté (dette, voir nilm_device_totals).
+ */
+export const REJECT_LIFT = {
+  device: "nilm:rejet_leve",
+  minAgeMin: 60,
+  maxAgeH: 24,
+} as const;
+
+export function liftedSessionIds(states: DeviceState[]): Set<number> {
+  return new Set(states.filter((s) => s.device === REJECT_LIFT.device).map((s) => Number(s.state)).filter(Number.isFinite));
+}
+
+/** Rejets récents qui ne tiennent plus sur la courbe complète (on_event_id à lever). */
+export function rejectionsToLift(
+  candidates: Session[],
+  levels: Map<number, number>,
+  states: DeviceState[],
+  contexts: DeviceContext[],
+  nowMs: number,
+): number[] {
+  const rejected = rejectedSessionIds(states);
+  const recent = new Set(
+    candidates
+      .filter(
+        (s) =>
+          rejected.has(s.on_event_id) &&
+          s.end_ts &&
+          nowMs - ts(s.start_ts) <= REJECT_LIFT.maxAgeH * 3600000 &&
+          nowMs - ts(s.end_ts) >= REJECT_LIFT.minAgeMin * 60000,
+      )
+      .map((s) => s.on_event_id),
+  );
+  if (!recent.size) return [];
+  const others = new Set([...rejected].filter((id) => !recent.has(id)));
+  const again = new Set(implausibleSessions(candidates, levels, others, contexts));
+  return [...recent].filter((id) => !again.has(id));
 }
 
 export type RunningSession = { on_event_id: number; cluster_id: number; watts: number; elapsed_min: number };
