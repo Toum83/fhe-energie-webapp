@@ -1106,6 +1106,13 @@ test("départ en deux marches (PC du soir) : regroupé, apparié à l'arrêt et 
   const proj = [{ labelPrefix: "Vidéo proj", since: "2026-11-01", on: [[T("20:00:00"), T("21:00:00")]] as [number, number][], minOnShare: 0.5 }];
   const withProj = runPipeline(events, [pc], Date.parse("2026-11-11T00:00:00Z"), proj, states).sessions;
   assert.equal(withProj[0].cluster_key, "id:186");
+  // Arrêt plus grand que le départ (la puissance du jeu monte) : apparié au retour au niveau
+  // d'avant (22/11/2026 : +320 W à 21 h, −437 W à 23 h 11).
+  const big = [e(10, "20:00:22", 320, 225), e(11, "21:30:00", -120, 700), e(12, "22:11:02", -437, 640)];
+  const bigStates = [{ device: "nilm:marches", ts: big[0].ts, state: "10|320|225" }];
+  const paired = runPipeline(big, [pc], Date.parse("2026-11-11T00:00:00Z"), [], bigStates).sessions.find((x) => x.on_event_id === 10);
+  assert.equal(paired?.end_ts, big[2].ts);
+  assert.equal(paired?.power_w, 320);
 });
 
 test("lave-linge à 30 °C : brassage doux reconnu s'il est ouvert par une chauffe, pas la cuisine ni le chauffe-eau", async () => {

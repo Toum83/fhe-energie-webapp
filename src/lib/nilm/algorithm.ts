@@ -14,6 +14,8 @@ export type PowerEvent = {
   power_after?: number | null;
   direction: "on" | "off";
   production_power: number | null;
+  /** Départ en marches regroupé (PC du soir, voir STAGED_START) : apparié par retour au niveau. */
+  staged?: boolean;
 };
 
 export type Session = {
@@ -427,6 +429,26 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
         }
       }
     }
+    // Départ du PC (marches regroupées) sans arrêt de même taille : sa puissance monte pendant le jeu,
+    // son arrêt est plus grand que son départ (22/11/2026 : +320 W à 21 h, −437 W à 23 h 11) ou noyé
+    // dans un autre échelon (25/11/2026 : dans un arrêt du four de −2 671 W). On prend alors le
+    // premier arrêt qui ramène la maison à son niveau d'avant (en dernier recours seulement : le
+    // niveau redescend parfois pendant le jeu, 05/11/2026).
+    let levelStaged = false;
+    if (!best && on.staged && on.power_before != null) {
+      const ceiling = Math.max(on.power_before, 0) + Math.max(PARAMS.levelRelTol * on.delta_w, PARAMS.levelAbsTolW);
+      for (let j = i + 1; j < merged.length; j++) {
+        const off = merged[j];
+        if ((ts(off.ts) - ts(on.ts)) / 1000 > PARAMS.pairWindowS) break;
+        if (off.direction !== "off" || used.has(j) || takenElsewhere(j, i)) continue;
+        if (remaining.has(j) && left(j) < (1 - PARAMS.levelRelTol) * on.delta_w) continue;
+        if (off.power_after != null && off.power_after <= ceiling) {
+          best = { err: 0, j };
+          levelStaged = true;
+          break;
+        }
+      }
+    }
     if (!best) continue;
     const off = merged[best.j];
     const offMag = left(best.j);
@@ -435,11 +457,11 @@ export function pairSessions(merged: PowerEvent[], nowMs = Infinity): { sessions
     // production, coupé à −1 761 W avec 206 W ; les 306 W restants ont fermé une fausse session de
     // 297 W, comptée 0,55 kWh au PC.
     const prodGap = isFine(off.ts) ? Math.abs((on.production_power ?? 0) - (off.production_power ?? 0)) : 0;
-    const rest = byLevel && best.err === 0 && offMag - on.delta_w > prodGap ? offMag - on.delta_w : 0;
+    const rest = (byLevel || levelStaged) && best.err === 0 && offMag - on.delta_w > prodGap ? offMag - on.delta_w : 0;
     if (rest >= minStepAt(off.ts)) remaining.set(best.j, rest);
     else used.add(best.j);
     const durationMin = (ts(off.ts) - ts(on.ts)) / 60000;
-    let powerW = byLevel && best.err === 0 ? on.delta_w : (on.delta_w + offMag) / 2;
+    let powerW = (byLevel || levelStaged) && best.err === 0 ? on.delta_w : (on.delta_w + offMag) / 2;
     if (byLevel && best.err === 0 && durationMin >= PARAMS.revealMinMinutes) {
       const revealed = revealedPowerW(merged, i, best.j);
       if (revealed != null) powerW = revealed;
@@ -1703,7 +1725,7 @@ export function applyStagedStarts(merged: PowerEvent[], states: DeviceState[]): 
     const first = byId.get(ids[0]);
     const rise = Number(riseRaw), before = Number(beforeRaw);
     if (!first || !Number.isFinite(rise) || !ids.slice(1).every((id) => byId.has(id))) continue;
-    replace.set(first.id, { ...first, direction: "on", delta_w: rise, power_before: before, power_after: before + rise });
+    replace.set(first.id, { ...first, direction: "on", delta_w: rise, power_before: before, power_after: before + rise, staged: true });
     ids.slice(1).forEach((id) => drop.add(id));
   }
   return merged.filter((e) => !drop.has(e.id)).map((e) => replace.get(e.id) ?? e);
